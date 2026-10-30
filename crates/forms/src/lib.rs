@@ -27,7 +27,7 @@ pub mod table;
 pub use actions::{FieldAction, Trigger, field_action_chains, field_actions, set_field_actions};
 pub use author::{
     BorderStyle, CheckStyle, FieldFont, FieldProps, Look, LookPatch, MIN_FIELD_SIDE, NewField, add_field, check_style, delete_field,
-    delete_field_object, duplicate_field, look, redraw_field, set_button_icon, set_props,
+    delete_field_object, delete_widget, duplicate_field, look, redraw_field, set_button_icon, set_props,
 };
 pub use calc_order::{CalculatedField, CalculationIssue, CalculationOrder, calculation_order, set_calculation_order};
 pub use scripting::{
@@ -46,7 +46,7 @@ pub use read::{Fields, acroform, adopted_page_fields, fields, fields_with_adopte
 #[cfg(test)]
 use read::{MAX_SCRIPT_BYTES, PageWalk, enumerate, form_reads};
 use read::{script, script_budget};
-pub use tab_order::{TabOrder, move_in_tab_order, set_tab_order};
+pub use tab_order::{TabOrder, move_in_tab_order, set_tab_order, tab_orders};
 #[cfg(test)]
 use values::has_password_flag;
 use values::write_value;
@@ -174,6 +174,12 @@ pub struct Field {
 impl Field {
     pub fn has(&self, flag: u32) -> bool {
         self.flags & flag != 0
+    }
+
+    /// A comb field: the Comb flag set with a `/MaxLen`, neither multiline nor password (ISO
+    /// 32000-2 Table 228). Each cell holds one character.
+    pub fn is_comb(&self) -> bool {
+        self.has(flags::COMB) && !self.has(flags::MULTILINE) && !self.has(flags::PASSWORD) && self.max_len.is_some_and(|m| m > 0)
     }
 
     pub fn read_only(&self) -> bool {

@@ -8,6 +8,7 @@ use pdfcraft_engine::{Edit, NewAnnotation, REDACT_PATTERNS, REDACTION_CODE_SETS,
 use pdfcraft_render::DocInfo;
 
 use crate::canvas::{DocView, PageToolContext, PageXform};
+use crate::page_cursor::Layer;
 use crate::theme::Tokens;
 use crate::{PdfCraftApp, widgets};
 
@@ -235,7 +236,7 @@ fn to_user(xf: &PageXform, info: &DocInfo, page: usize, p: Pos2) -> [f64; 2] {
 /// marked when it ends, see [`after_text`]); presses elsewhere draw a box. Returns `true` when
 /// the gesture is a box.
 pub(crate) fn page_input(cx: PageToolContext<'_>, over_text: impl Fn(Pos2) -> bool, view: &mut DocView) -> bool {
-    let PageToolContext { ui, resp, xf, ptr, page, info, .. } = cx;
+    let PageToolContext { resp, xf, ptr, page, info, .. } = cx;
     let pointer = ptr.pos;
     if let Some((dp, start)) = view.redact_drag
         && dp == page
@@ -253,7 +254,7 @@ pub(crate) fn page_input(cx: PageToolContext<'_>, over_text: impl Fn(Pos2) -> bo
     }
     let Some(p) = pointer.filter(|p| xf.rect.contains(*p)) else { return false };
     if !over_text(p) {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+        view.cursor.claim(Layer::ToolArea, egui::CursorIcon::Crosshair);
     }
     if resp.drag_started() {
         let origin = ptr.origin.unwrap_or(p);

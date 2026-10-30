@@ -107,6 +107,10 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                                     bm_action = Some(BmAction::FromStructure);
                                     ui.close();
                                 }
+                                if bm_editable && ui.button(tl!("New bookmarks from text styles…")).clicked() {
+                                    bm_action = Some(BmAction::FromTextStyles);
+                                    ui.close();
+                                }
                                 if !info.outline.is_empty() {
                                     for (levels, label) in [
                                         (usize::MAX, tl!("Expand all bookmarks")),

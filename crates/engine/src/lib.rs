@@ -54,6 +54,7 @@ mod stamp_preview;
 mod test_hooks;
 pub mod text_fonts;
 mod text_preview;
+pub mod text_style_bookmarks;
 pub mod word_count;
 pub mod xfa;
 mod xfa_form;
@@ -66,7 +67,7 @@ pub use links::{
 pub use signature_image::{ImageSignaturePreview, SignatureImage};
 pub use signature_scan::{PhotoRect, ScanError, SignaturePhoto, Turn};
 pub use stamp_preview::StampPreview;
-pub use text_preview::TextEditPreview;
+pub use text_preview::{TextEditPreview, UnmarkedPages};
 
 pub use pdfcraft_organize::{BoxSpec, FieldConflicts, PageBox, SplitBy, Transition, TransitionSpec, mime_for_name, split_ranges};
 
@@ -88,7 +89,7 @@ pub use pdfcraft_forms::{
     BorderStyle, CalculatedField, CalculationIssue, CalculationOrder, CheckStyle, Field as FormField, FieldAction, FieldChange, FieldFont,
     FieldKind as FormFieldKind, FieldProps, FieldValue, Look as FieldLook, LookPatch as FieldLookPatch, NewField, TabOrder, Trigger as FieldTrigger,
     Widget as FormWidget, af as form_scripts, appearance as form_appearance, appearance::auto_text_size_by as field_auto_text_size_by,
-    calculations_changed as form_calculations_changed, flags as field_flags,
+    appearance::comb_auto_text_size as field_comb_auto_text_size, calculations_changed as form_calculations_changed, flags as field_flags,
 };
 
 pub use pdfcraft_a11y as a11y;

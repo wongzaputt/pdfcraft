@@ -9,6 +9,7 @@ use pdfcraft_engine::{Edit, FillMark, NewAnnotation, PhotoRect, Shape, Signature
 use pdfcraft_render::{DocInfo, PageInfo};
 
 use crate::canvas::{DocView, PageToolContext, PageXform};
+use crate::page_cursor::Layer;
 use crate::theme::Tokens;
 
 mod scan;
@@ -457,10 +458,10 @@ pub(crate) fn page_input(cx: PageToolContext<'_>, input: PageInput<'_>, view: &m
         if let Some(rect) = image.rect(p, at, tool == FillTool::Initials) {
             let tex = image_texture(ui, image, preview);
             xf.paint_user_image(ui.painter(), tex, p, rect, i64::from(p.rotation), Color32::WHITE);
-            ui.ctx().set_cursor_icon(egui::CursorIcon::None);
+            view.cursor.claim(Layer::ToolArea, egui::CursorIcon::None);
         }
     } else {
-        ui.ctx().set_cursor_icon(if tool == FillTool::Text { egui::CursorIcon::Text } else { egui::CursorIcon::Crosshair });
+        view.cursor.claim(Layer::ToolArea, if tool == FillTool::Text { egui::CursorIcon::Text } else { egui::CursorIcon::Crosshair });
     }
     if !resp.clicked() {
         return None;

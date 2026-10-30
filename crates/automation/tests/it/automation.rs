@@ -516,6 +516,78 @@ fn autotag_form_fields_writes_reviewable_widget_tags() {
     assert_eq!(result["status"], "passed");
 }
 
+/// A two-page PDF with headings set apart only by their style: chapters in Helvetica-Bold 18,
+/// a section in Helvetica-Bold 14, text in Helvetica 11 (#1693).
+fn styled_headings_pdf() -> Vec<u8> {
+    let page1 = "BT /FB 18 Tf 72 700 Td (Introduction) Tj ET BT /FR 11 Tf 72 670 Td (Some text) Tj ET \
+                 BT /FB 14 Tf 72 640 Td (Background) Tj ET";
+    let page2 = "BT /FB 18 Tf 72 700 Td (Results) Tj ET BT /FR 11 Tf 72 670 Td (More text) Tj ET";
+    let objs: Vec<String> = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".into(),
+        "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /MediaBox [0 0 612 792] /Resources << /Font << /FB 7 0 R /FR 8 0 R >> >> >>".into(),
+        "<< /Type /Page /Parent 2 0 R /Contents 5 0 R >>".into(),
+        "<< /Type /Page /Parent 2 0 R /Contents 6 0 R >>".into(),
+        format!("<< /Length {} >>\nstream\n{page1}\nendstream", page1.len()),
+        format!("<< /Length {} >>\nstream\n{page2}\nendstream", page2.len()),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>".into(),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>".into(),
+    ];
+    let mut bytes = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (i, o) in objs.iter().enumerate() {
+        offsets.push(bytes.len());
+        bytes.extend_from_slice(format!("{} 0 obj\n{o}\nendobj\n", i + 1).as_bytes());
+    }
+    let xref = bytes.len();
+    bytes.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objs.len() + 1).as_bytes());
+    for o in offsets {
+        bytes.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes());
+    }
+    bytes.extend_from_slice(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objs.len() + 1).as_bytes());
+    bytes
+}
+
+/// #1693: text_styles lists the styles, largest first; bookmark_from_text_styles makes the
+/// bookmarks from the ones given per level, returns the tree, undoes in one step and says why
+/// when it can't.
+#[test]
+fn bookmarks_from_text_styles_through_tools() {
+    let dir = workdir("text-style-bookmarks");
+    std::fs::write(dir.join("styled.pdf"), styled_headings_pdf()).unwrap();
+    let mut a = auto(&dir);
+    let doc = ok(&mut a, "doc_open", json!({ "path": "styled.pdf" }))["doc"].as_u64().unwrap();
+    let styles = ok(&mut a, "text_styles", json!({ "doc": doc }))["styles"].clone();
+    assert_eq!(
+        styles,
+        json!([
+            { "font": "Helvetica-Bold", "size": 18.0, "bold": true, "italic": false, "lines": 2, "pages": 2, "sample": "Introduction" },
+            { "font": "Helvetica-Bold", "size": 14.0, "bold": true, "italic": false, "lines": 1, "pages": 1, "sample": "Background" },
+            { "font": "Helvetica", "size": 11.0, "bold": false, "italic": false, "lines": 2, "pages": 2, "sample": "Some text" },
+        ])
+    );
+    // The styles as text_styles gave them, the chapters first.
+    let levels = json!([styles[0].clone(), { "font": "Helvetica-Bold", "size": 14, "bold": true }]);
+    let r = ok(&mut a, "bookmark_from_text_styles", json!({ "doc": doc, "levels": levels }));
+    let top = &r["bookmarks"][0];
+    assert_eq!(top["title"], "Untitled");
+    let titles: Vec<(&str, u64)> =
+        top["children"].as_array().unwrap().iter().map(|c| (c["title"].as_str().unwrap(), c["page"].as_u64().unwrap())).collect();
+    assert_eq!(titles, [("Introduction", 1), ("Results", 2)]);
+    assert_eq!(top["children"][0]["children"][0]["title"], "Background");
+    assert_eq!(ok(&mut a, "edit_undo", json!({ "doc": doc }))["undone"], "New bookmarks from text styles");
+    // What can't be done says why.
+    let call = |a: &mut pdfcraft_automation::Automation, levels: Value| a.call("bookmark_from_text_styles", &json!({ "doc": doc, "levels": levels }));
+    assert!(matches!(call(&mut a, json!([])), Err(ToolError::InvalidArgs(_))));
+    assert!(matches!(call(&mut a, json!([{ "font": "Helvetica-Bold" }])), Err(ToolError::InvalidArgs(m)) if m.contains("size")));
+    assert!(
+        matches!(call(&mut a, json!([{ "font": "Helvetica-Bold", "size": 18, "bold": "yes" }])), Err(ToolError::InvalidArgs(m)) if m.contains("bold"))
+    );
+    let unused = call(&mut a, json!([{ "font": "Times-Roman", "size": 30 }]));
+    assert!(matches!(&unused, Err(ToolError::Failed(m)) if m.contains("no text is set in the chosen styles")), "{unused:?}");
+    let too_many: Vec<Value> = (0..10).map(|_| styles[0].clone()).collect();
+    assert!(matches!(call(&mut a, json!(too_many)), Err(ToolError::InvalidArgs(_))));
+}
+
 /// A one-page PDF whose form holds one text field named `name`.
 fn form_pdf(name: &str) -> Vec<u8> {
     let objs: Vec<String> = vec![
@@ -2568,6 +2640,29 @@ fn orphan_form_fields_through_tools() {
     assert_ne!(v, "Filled by an agent");
 }
 
+/// An auto-sized (`0 Tf`) single-line field fills to the size its height gives, as Acrobat
+/// draws it, not a 12 pt cap: 30 pt tall, less border and padding, is about 21 pt text.
+#[test]
+fn auto_sized_text_follows_a_tall_field() {
+    let objs: Vec<&str> = vec![
+        "<< /Type /Catalog /Pages 2 0 R /AcroForm 4 0 R >>",                                     // 1
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 300 300] >>",                     // 2
+        "<< /Type /Page /Parent 2 0 R /Annots [5 0 R] >>",                                       // 3
+        "<< /Fields [5 0 R] /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv 6 0 R >> >> >>",          // 4
+        "<< /Type /Annot /Subtype /Widget /FT /Tx /T (tall) /Rect [10 200 290 230] /P 3 0 R >>", // 5
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",     // 6
+    ];
+    let dir = workdir("auto-size-tall");
+    std::fs::write(dir.join("form.pdf"), pdf_of(&objs)).unwrap();
+    let mut a = auto(&dir);
+    let doc = ok(&mut a, "doc_open", json!({ "path": "form.pdf" }))["doc"].as_u64().unwrap();
+    ok(&mut a, "form_fill", json!({ "doc": doc, "values": { "tall": "Hi" } }));
+    let found = ok(&mut a, "text_find", json!({ "doc": doc, "query": "Hi" }));
+    let r = &found["matches"][0]["rects"][0];
+    let height = r[3].as_f64().unwrap() - r[1].as_f64().unwrap();
+    assert!(height > 16.0, "12 pt text would be about 12 tall, ~21 pt about 21: {height} ({found})");
+}
+
 #[test]
 fn reversing_pages_through_tools() {
     let dir = workdir("reverse");
@@ -4035,6 +4130,29 @@ fn preparing_a_form_through_tools() {
 }
 
 #[test]
+fn renaming_a_radio_button_to_a_groups_name_joins_the_group_through_tools() {
+    // #4949: two buttons placed separately are two groups; naming one after the other makes
+    // them one group, and a clashing export value is renamed instead of shared.
+    let dir = workdir("radio-join");
+    let mut a = auto(&dir);
+    let doc = ok(&mut a, "doc_open", json!({ "path": "a.pdf" }))["doc"].as_u64().unwrap();
+    ok(&mut a, "form_add_field", json!({ "doc": doc, "page": 1, "type": "radio", "rect": [20, 100, 34, 114], "group": "size", "export": "S" }));
+    ok(&mut a, "form_add_field", json!({ "doc": doc, "page": 1, "type": "radio", "rect": [40, 100, 54, 114], "group": "other", "export": "S" }));
+    ok(&mut a, "form_fill", json!({ "doc": doc, "values": { "size": "S" } }));
+    let r = ok(&mut a, "form_set_props", json!({ "doc": doc, "field": "other", "name": "size" }));
+    assert_eq!(r["field"], "size");
+    ok(&mut a, "doc_save", json!({ "doc": doc, "path": "joined.pdf" }));
+    let doc = ok(&mut a, "doc_open", json!({ "path": "joined.pdf" }))["doc"].as_u64().unwrap();
+    let fields = ok(&mut a, "form_fields", json!({ "doc": doc }));
+    let f = fields["fields"].as_array().unwrap();
+    assert_eq!(f.iter().map(|f| f["name"].as_str().unwrap()).collect::<Vec<_>>(), ["size"], "one group");
+    assert_eq!(f[0]["options"], json!(["S", "Choice1"]), "the joining button takes a free export value");
+    assert_eq!(f[0]["value"], "S", "the group keeps its selection");
+    ok(&mut a, "form_fill", json!({ "doc": doc, "values": { "size": "Choice1" } }));
+    assert_eq!(ok(&mut a, "form_fields", json!({ "doc": doc }))["fields"][0]["value"], "Choice1");
+}
+
+#[test]
 fn rotating_a_field_through_tools() {
     let dir = workdir("rotate-field");
     let mut a = auto(&dir);
@@ -4942,6 +5060,23 @@ fn the_calculation_order_is_read_fixed_and_set() {
     let r = ok(&mut a, "form_calculation_order", json!({ "doc": doc }));
     assert_eq!(r["calculation_order"], json!(["total", "tax", "sub", "x", "y"]));
     assert_eq!((value(&mut a, "total"), value(&mut a, "tax")), (json!("0"), json!("0")), "undone with the values it recalculated");
+}
+
+#[test]
+fn page_tab_orders_are_read_and_set_per_page_through_tools() {
+    let dir = workdir("pagetabs");
+    let mut a = auto(&dir);
+    let doc = ok(&mut a, "doc_open", json!({ "path": "a.pdf" }))["doc"].as_u64().unwrap();
+    let r = ok(&mut a, "form_tab_order", json!({ "doc": doc }));
+    assert_eq!(r["page_tabs"], json!(["annotations", "annotations", "annotations"]));
+    assert!(r["undo"].is_null(), "reading changes nothing: {r}");
+    let r = ok(&mut a, "form_tab_order", json!({ "doc": doc, "order": "column", "pages": [1, 3] }));
+    assert_eq!(r["page_tabs"], json!(["column", "annotations", "column"]));
+    assert_eq!((r["undo"].as_str(), r["dirty"].as_bool()), (Some("Set tab order"), Some(true)));
+    let r = ok(&mut a, "form_tab_order", json!({ "doc": doc, "order": "structure", "pages": [2] }));
+    assert_eq!(r["page_tabs"], json!(["column", "structure", "column"]));
+    let r = ok(&mut a, "form_tab_order", json!({ "doc": doc, "order": "unspecified", "pages": [1] }));
+    assert_eq!(r["page_tabs"], json!(["annotations", "structure", "column"]));
 }
 
 #[test]
@@ -6533,6 +6668,8 @@ fn ocr_recognize_files_with_distinct_names_runs_as_before() {
     }
 }
 
+/// Field scripts set through the tools validate, calculate and format, and `js_run` reports console
+/// lines, every message with its details, and requests.
 #[test]
 fn javascript_through_tools() {
     let dir = workdir("js");
@@ -6566,10 +6703,17 @@ fn javascript_through_tools() {
     let r = ok(
         &mut a,
         "js_run",
-        json!({ "doc": doc, "script": "console.println(getField('Total').value); getField('Qty').value = 3; this.pageNum = 1; app.alert('ok');" }),
+        json!({ "doc": doc, "script": "console.println(getField('Total').value); getField('Qty').value = 3; this.pageNum = 1; app.alert('ok'); app.alert({ cMsg: 'Clear?', cTitle: 'Order', nIcon: 2, nType: 3 });" }),
     );
     assert_eq!(r["console"][0], "2500");
-    assert_eq!(r["alerts"][0], "ok");
+    // Every message, in order, with its title, icon and buttons.
+    assert_eq!(
+        r["alerts"],
+        json!([
+            { "message": "ok", "title": null, "icon": "error", "buttons": "ok" },
+            { "message": "Clear?", "title": "Order", "icon": "question", "buttons": "yes_no_cancel" },
+        ])
+    );
     assert_eq!(r["requests"][0]["page"], 2);
     let f = ok(&mut a, "form_fields", json!({ "doc": doc }));
     let total = f["fields"].as_array().unwrap().iter().find(|x| x["name"] == "Total").unwrap().clone();
@@ -7490,6 +7634,8 @@ fn repeated_xfa_print_buttons_work_through_tools_and_after_reopen() {
     check(&mut a, doc);
 }
 
+/// A dynamic XFA form's scripts run on open, on fills and for buttons through the tools, with undo,
+/// and `js_run` reports their messages.
 #[test]
 fn xfa_scripts_run_for_buttons_and_field_changes_through_tools() {
     let dir = workdir("xfa-scripts");
@@ -7518,7 +7664,7 @@ fn xfa_scripts_run_for_buttons_and_field_changes_through_tools() {
     ok(&mut a, "edit_undo", json!({ "doc": doc }));
     assert!(field(&mut a, "amount_2").is_none());
     let r = ok(&mut a, "js_run", json!({ "doc": doc, "script": "", "field": "hello" }));
-    assert_eq!(r["alerts"], json!(["Hello 4"]));
+    assert_eq!(r["alerts"], json!([{ "message": "Hello 4", "title": null, "icon": "error", "buttons": "ok" }]));
 }
 
 #[test]
@@ -7531,7 +7677,7 @@ fn active_xfa_skips_container_fallback_scripts_after_save_and_reopen() {
     ok(&mut a, "js_set_document_script", json!({"doc":doc,"name":"viewerFallback","script":fallback}));
     let out = ok(&mut a, "js_run", json!({"doc":doc,"script":"app.alert('Console message');"}));
     assert!(out["error"].is_null(), "{out}");
-    assert_eq!(out["alerts"], json!(["Console message"]));
+    assert_eq!(out["alerts"], json!([{ "message": "Console message", "title": null, "icon": "error", "buttons": "ok" }]));
     ok(&mut a, "doc_save", json!({"doc":doc,"path":"saved.pdf"}));
     ok(&mut a, "doc_close", json!({"doc":doc}));
     let doc = ok(&mut a, "doc_open", json!({"path":"saved.pdf"}))["doc"].as_u64().unwrap();
@@ -7541,7 +7687,7 @@ fn active_xfa_skips_container_fallback_scripts_after_save_and_reopen() {
     assert_eq!(out["alerts"], json!([]));
     let out = ok(&mut a, "js_run", json!({"doc":doc,"script":"","field":"hello"}));
     assert!(out["error"].is_null(), "{out}");
-    assert_eq!(out["alerts"], json!(["Hello 2"]));
+    assert_eq!(out["alerts"], json!([{ "message": "Hello 2", "title": null, "icon": "error", "buttons": "ok" }]));
     ok(&mut a, "xfa_to_static", json!({"doc":doc}));
     let out = ok(&mut a, "js_run", json!({"doc":doc,"script":""}));
     assert_eq!(out["alerts"].as_array().unwrap().len(), 1);
@@ -7965,7 +8111,7 @@ fn hebrew_text_through_tools_saves_reopens_extracts_and_renders() {
     let mut a = auto(&dir);
     let doc = ok(&mut a, "doc_open", json!({"path": "a.pdf"}))["doc"].as_u64().unwrap();
     let text = "שם משפחה: שרון, טל׳ 052-1234567 (נייד)";
-    let args = json!({"doc": doc, "page": 1, "text": text, "rect": [10, 20, 400, 40], "size": 11, "align": "right"});
+    let args = json!({"doc": doc, "page": 1, "text": text, "rect": [10, 20, 190, 40], "size": 7, "align": "right"});
     if pdfcraft_fonts::document_hebrew_font(false).is_none() {
         assert!(a.call("page_add_text", &args).unwrap_err().to_string().contains("U+05E9"));
         assert_eq!(ok(&mut a, "content_list", json!({"doc": doc}))["count"], 0);
@@ -9258,4 +9404,76 @@ fn page_render_draws_stamps_without_an_appearance() {
     let custom = ink(170, 290);
     let grey = custom.iter().filter(|p| p[0].abs_diff(p[1]) < 24 && p[1].abs_diff(p[2]) < 24).count();
     assert!(grey > 100 && grey == custom.len(), "an unknown name is a grey placeholder: {grey} of {}", custom.len());
+}
+
+#[test]
+fn deleting_one_radio_button_through_tools_keeps_the_group() {
+    let dir = workdir("delete-radio");
+    let mut a = auto(&dir);
+    let doc = ok(&mut a, "doc_open", json!({ "path": "a.pdf" }))["doc"].as_u64().unwrap();
+    for (x, export) in [(20, "S"), (40, "M"), (60, "L")] {
+        let args = json!({ "doc": doc, "page": 1, "type": "radio", "rect": [x, 100, x + 14, 114], "group": "size", "export": export });
+        ok(&mut a, "form_add_field", args);
+    }
+    ok(&mut a, "form_fill", json!({ "doc": doc, "values": { "size": "L" } }));
+    ok(&mut a, "form_delete_field", json!({ "doc": doc, "field": "size", "widget": 2 }));
+    let size = |a: &mut Automation| ok(a, "form_fields", json!({ "doc": doc }))["fields"][0].clone();
+    assert_eq!((size(&mut a)["options"].clone(), size(&mut a)["value"].clone()), (json!(["S", "L"]), json!("L")), "only M is gone");
+    for widget in [0, 3, -1] {
+        let r = a.call("form_delete_field", &json!({ "doc": doc, "field": "size", "widget": widget }));
+        assert!(matches!(r, Err(ToolError::InvalidArgs(_))), "widget {widget}: {r:?}");
+    }
+    ok(&mut a, "edit_undo", json!({ "doc": doc }));
+    assert_eq!(size(&mut a)["options"], json!(["S", "M", "L"]), "one undo step brings it back");
+}
+/// `/I` of the top-level field `name` in the saved file `path`.
+fn saved_selection_indices(path: &Path, name: &str) -> Option<Vec<i64>> {
+    let d = pdfcraft_cos::Document::open(std::sync::Arc::new(std::fs::read(path).unwrap())).unwrap();
+    let root = d.get(d.root().unwrap()).as_dict().cloned().unwrap();
+    let form = d.resolve(root.get(b"AcroForm").unwrap()).as_dict().cloned().unwrap();
+    let all = d.resolve(form.get(b"Fields").unwrap()).as_array().cloned().unwrap();
+    let f = all
+        .iter()
+        .filter_map(|o| d.resolve(o).as_dict().cloned())
+        .find(|f| f.get(b"T").and_then(|t| d.resolve(t).as_string().map(|s| s.to_text())).as_deref() == Some(name))
+        .unwrap();
+    f.get(b"I").map(|i| d.resolve(i).as_array().unwrap().iter().map(|o| o.as_int().unwrap()).collect())
+}
+
+#[test]
+fn changing_a_lists_options_through_tools_keeps_its_saved_selection_on_the_same_items() {
+    let dir = workdir("choice-index");
+    let mut a = auto(&dir);
+    let doc = ok(&mut a, "doc_open", json!({ "path": "a.pdf" }))["doc"].as_u64().unwrap();
+    let args = json!({ "doc": doc, "page": 1, "type": "list", "rect": [20, 60, 180, 140], "options": ["A", "B", "C"], "multi_select": true, "name": "letters" });
+    ok(&mut a, "form_add_field", args);
+    ok(&mut a, "form_fill", json!({ "doc": doc, "values": { "letters": ["B", "C"] } }));
+    ok(&mut a, "form_set_props", json!({ "doc": doc, "field": "letters", "options": ["B", "C", "D"] }));
+    ok(&mut a, "doc_save", json!({ "doc": doc, "path": "letters.pdf" }));
+    assert_eq!(saved_selection_indices(&dir.join("letters.pdf"), "letters"), Some(vec![0, 1]), "B and C are now items 0 and 1");
+}
+
+/// Clearing a field's default through `form_set_props` (`"default": ""`) leaves it with none,
+/// even when its parent field has one it would otherwise inherit.
+#[test]
+fn clearing_a_kids_default_through_tools_does_not_bring_back_its_parents() {
+    let objs = [
+        "<< /Type /Catalog /Pages 2 0 R /AcroForm 4 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 400 300] >>",
+        "<< /Type /Page /Parent 2 0 R /Annots [6 0 R] >>",
+        "<< /Fields [5 0 R] /DA (/Helv 12 Tf 0 g) /DR << /Font << /Helv 7 0 R >> >> >>",
+        "<< /T (address) /FT /Tx /DV (Main St) /Kids [6 0 R] >>",
+        "<< /Type /Annot /Subtype /Widget /T (city) /Parent 5 0 R /DV (Elm) /V (Elm) /Rect [10 250 150 268] /P 3 0 R >>",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+    ];
+    let dir = workdir("kid-default");
+    std::fs::write(dir.join("form.pdf"), pdf_of(&objs)).unwrap();
+    let mut a = auto(&dir);
+    let doc = ok(&mut a, "doc_open", json!({ "path": "form.pdf" }))["doc"].as_u64().unwrap();
+    ok(&mut a, "form_set_props", json!({ "doc": doc, "field": "address.city", "default": "" }));
+    ok(&mut a, "form_fill", json!({ "doc": doc, "values": { "address.city": "Oak" } }));
+    ok(&mut a, "form_reset", json!({ "doc": doc }));
+    let fields = ok(&mut a, "form_fields", json!({ "doc": doc }));
+    let city = fields["fields"].as_array().unwrap().iter().find(|f| f["name"] == "address.city").unwrap().clone();
+    assert!(city["value"].is_null() || city["value"] == "", "reset clears it rather than restoring the parent's Main St: {}", city["value"]);
 }

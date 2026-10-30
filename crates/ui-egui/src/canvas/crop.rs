@@ -6,6 +6,7 @@ use pdfcraft_engine::{BoxSpec, Edit, PageBox};
 use pdfcraft_render::DocInfo;
 
 use crate::canvas::{DocView, PageXform};
+use crate::page_cursor::Layer;
 use crate::page_pointer::PagePointer;
 
 /// A crop rectangle being dragged: (page, start on screen).
@@ -32,7 +33,7 @@ pub(crate) fn page_input(ui: &egui::Ui, input: CropPageInput<'_>) -> bool {
     let CropPageInput { resp, xf, ptr, page, info, view, allowed } = input;
     let (pointer, origin) = (ptr.pos, ptr.origin);
     if pointer.is_some_and(|p| xf.rect.contains(p)) {
-        ui.ctx().set_cursor_icon(if allowed { egui::CursorIcon::Crosshair } else { egui::CursorIcon::NotAllowed });
+        view.cursor.claim(Layer::ToolArea, if allowed { egui::CursorIcon::Crosshair } else { egui::CursorIcon::NotAllowed });
     }
     if !allowed {
         return false;

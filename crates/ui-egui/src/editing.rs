@@ -669,6 +669,7 @@ fn is_form_edit(edit: &Edit) -> bool {
             | Edit::ResetForm { .. }
             | Edit::AddField { .. }
             | Edit::DeleteField { .. }
+            | Edit::DeleteWidget { .. }
             | Edit::DuplicateField { .. }
             | Edit::SetFieldProps { .. }
             | Edit::SetFieldImage { .. }
@@ -730,6 +731,11 @@ impl PdfCraftApp {
             A::FromStructure => {
                 self.right = Some(crate::RightPanel::Bookmarks);
                 Edit::BookmarksFromStructure
+            }
+            // A dialog chooses the styles; it makes the edit.
+            A::FromTextStyles => {
+                self.open_text_style_bookmarks(id);
+                return;
             }
         };
         self.apply_edit(edit);

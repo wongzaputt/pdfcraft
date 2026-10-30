@@ -8,6 +8,7 @@ use pdfcraft_engine::Edit;
 use crate::{CloseRequest, Dialog, PdfCraftApp, PropsTab, panels::human_size, widgets};
 
 pub(super) mod appearance;
+pub mod bookmark_styles_ui;
 pub(super) mod comment_props;
 pub(super) mod credits;
 pub(super) mod marks_ui;
@@ -52,6 +53,7 @@ struct Pending {
     summarize_now: bool,
     optimize_now: bool,
     duplicate_now: Option<Edit>,
+    page_props_now: Option<(pdfcraft_engine::DocId, u64, Edit)>,
     replace_now: bool,
     open_revision: Option<usize>,
     a11y_now: bool,
@@ -217,6 +219,19 @@ fn dialog_body(ui: &mut egui::Ui, app: &mut PdfCraftApp, dialog: Dialog, req: &m
             if !dialog_rotate_pages(ui, app, req) {
                 return false;
             }
+        }
+        Dialog::PageProps => {
+            let Some(d) = app.page_props_draft.as_mut() else {
+                req.close = true;
+                return false;
+            };
+            let (ok, cancel) = crate::organize_panel::page_props_body(ui, d);
+            // An order every page already has adds no undo step.
+            if ok && let Some(order) = d.tab_order.filter(|o| d.before != Some(*o)) {
+                req.page_props_now = Some((d.doc, d.generation, Edit::SetTabOrder { pages: d.pages.clone(), order }));
+            }
+            req.close = ok || cancel;
+            return false;
         }
         Dialog::DuplicateField => {
             if !dialog_duplicate_field(ui, app, req) {
@@ -405,6 +420,10 @@ fn dialog_body(ui: &mut egui::Ui, app: &mut PdfCraftApp, dialog: Dialog, req: &m
             req.apply = go;
             req.protect_now = req.apply;
             req.close = req.apply || cancel;
+            return false;
+        }
+        Dialog::BookmarksFromTextStyles => {
+            req.close = crate::bookmark_styles_ui::body(ui, app, &t);
             return false;
         }
         Dialog::NumberPages => {
@@ -1643,6 +1662,15 @@ fn finish_actions(app: &mut PdfCraftApp, req: &mut Pending) {
         app.duplicate_draft = None;
         app.apply_edit(e);
     }
+    // Another document became active, or the document changed, while the dialog was open: the
+    // pages at those indices may not be the ones chosen.
+    if let Some((doc, generation, e)) = req.page_props_now.take() {
+        if app.active_ids().is_some_and(|(_, id)| id == doc) && app.session.get(doc).is_some_and(|d| d.edit_generation() == generation) {
+            app.apply_edit(e);
+        } else {
+            app.notify_tr("The document changed while the dialog was open, so nothing was changed. Open Page properties again to set the tab order.");
+        }
+    }
     if req.extract_now {
         app.extract_selection();
     }
@@ -1702,6 +1730,9 @@ fn finish_redactions_and_fields(app: &mut PdfCraftApp, req: &mut Pending) {
         let form = |app: &PdfCraftApp| app.active_ids().and_then(|(_, id)| app.session.get(id)).map(|doc| doc.form.clone());
         // A rename also renames the field in the formulas that read it.
         let before = props.name.as_ref().and_then(|_| form(app));
+        // The widget being edited, by object: a radio button that joins a group by its new name
+        // is appended after the group's own buttons, so its index changes.
+        let widget = before.as_ref().and_then(|all| all.iter().find(|f| f.name == d.field)?.widgets.get(d.widget).map(|w| w.obj));
         if app.apply_edit(Edit::SetFieldProps { name: d.field.clone(), props: Box::new(props) })
             && let Some(i) = app.active
         {
@@ -1710,7 +1741,10 @@ fn finish_redactions_and_fields(app: &mut PdfCraftApp, req: &mut Pending) {
             let typed = d.name.trim();
             let prefix = d.field.rsplit_once('.').filter(|_| !typed.contains('.')).map(|(p, _)| format!("{p}.")).unwrap_or_default();
             let name = format!("{prefix}{typed}");
-            if let (Some(before), Some(after)) = (before, form(app)) {
+            let after = form(app);
+            let index =
+                widget.and_then(|obj| after.as_ref()?.iter().find(|f| f.name == name)?.widgets.iter().position(|w| w.obj == obj)).unwrap_or(d.widget);
+            if let (Some(before), Some(after)) = (before, after) {
                 let n = pdfcraft_engine::form_calculations_changed(&before, &after).iter().filter(|f| **f != name).count();
                 if n > 0 {
                     app.notify(crate::i18n::trn(
@@ -1721,7 +1755,7 @@ fn finish_redactions_and_fields(app: &mut PdfCraftApp, req: &mut Pending) {
                     ));
                 }
             }
-            app.views[i].prepare.selected = Some((name, d.widget));
+            app.views[i].prepare.selected = Some((name, index));
         }
     }
 }
@@ -1805,6 +1839,7 @@ fn finish_close(app: &mut PdfCraftApp, ctx: &egui::Context, dialog: Dialog, moda
         app.view_draft = None;
         app.custom_draft = None;
         app.bulk_field_props = None;
+        app.unmarked_page = Default::default();
     } else {
         app.dialog = Some(req.next.unwrap_or(dialog));
     }

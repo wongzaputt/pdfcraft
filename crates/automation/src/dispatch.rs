@@ -1,5 +1,5 @@
 use super::error::{Result, ToolError, failed};
-use super::json::{Args, document_attachment_keys, info, one_based, parse_style_ranges, security, summary};
+use super::json::{Args, document_attachment_keys, info, one_based, parse_style_ranges, security, summary, text_style_levels};
 use super::paths::{read_input, write_atomic};
 use super::{Arc, Automation, Edit, Value, block_overlapping, comments, json, tools};
 
@@ -229,6 +229,34 @@ impl Automation {
             }
             "bookmark_from_structure" => {
                 let mut out = self.apply(&a, Edit::BookmarksFromStructure)?;
+                let listing = self.bookmark_listing(&a)?;
+                out["bookmarks"] = listing["bookmarks"].clone();
+                out["next"] = listing["next"].clone();
+                out
+            }
+            "text_styles" => {
+                // The samples are the document's text, as text_lines is.
+                let doc = self.doc_to_copy(&a)?;
+                let styles: Vec<Value> = doc
+                    .text_styles()
+                    .into_iter()
+                    .map(|u| {
+                        json!({
+                            "font": u.style.font,
+                            "size": u.style.size,
+                            "bold": u.style.bold,
+                            "italic": u.style.italic,
+                            "lines": u.lines,
+                            "pages": u.pages,
+                            "sample": u.sample,
+                        })
+                    })
+                    .collect();
+                json!({ "styles": styles })
+            }
+            "bookmark_from_text_styles" => {
+                let levels = text_style_levels(&a)?;
+                let mut out = self.apply(&a, Edit::BookmarksFromTextStyles { levels })?;
                 let listing = self.bookmark_listing(&a)?;
                 out["bookmarks"] = listing["bookmarks"].clone();
                 out["next"] = listing["next"].clone();
