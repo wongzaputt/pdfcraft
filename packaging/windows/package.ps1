@@ -30,6 +30,20 @@ param(
 $ErrorActionPreference = 'Stop'
 $Root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 
+# Ensure cargo, dotnet tools (wix), and Windows SDK rc.exe are on PATH
+$dotnetDir = Join-Path $env:USERPROFILE '.dotnet'
+if (Test-Path $dotnetDir) {
+  $env:DOTNET_ROOT = $dotnetDir
+  $env:Path = "$dotnetDir;$dotnetDir\tools;$env:Path"
+}
+$env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
+if (-not (Get-Command 'rc.exe' -ErrorAction SilentlyContinue)) {
+  $sdkBins = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\10.*\x64\rc.exe' -ErrorAction SilentlyContinue
+  if ($sdkBins) {
+    $env:Path = "$($sdkBins[0].DirectoryName);$env:Path"
+  }
+}
+
 if ($BuiltWithoutCraftFonts -and -not $SkipBuild) {
   throw '-BuiltWithoutCraftFonts describes an existing build made without CRAFT_FONTS_DIR; use it only with -SkipBuild.'
 }
