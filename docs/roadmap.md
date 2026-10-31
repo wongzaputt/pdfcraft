@@ -129,7 +129,7 @@ encryption and storage-write retry behavior are unchanged; this does not resolve
 
 ## Alpha gate
 
-The stage standard's gate: Acrobat Pro's everyday core workflows must each work end to end on the
+The alpha gate: Acrobat Pro's everyday core workflows must each work end to end on the
 main platform (macOS), with the work saved and reopened. Any `no`, or a `partial` that blocks the
 workflow, keeps PdfCraft pre-alpha; those rows are the alpha checklist. Assessed 2026-10-10 with the
 rule applied across the Crafting Apps: a row blocks only when a typical user cannot complete the
