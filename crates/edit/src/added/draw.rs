@@ -3,8 +3,8 @@ use super::layout::{
 };
 use super::types::{AddedText, Align, Family};
 use super::{
-    ClusterKey, Content, Dict, Document, EditError, GlyphError, GlyphOutline, HashMap, HashSet, ObjRef, Object, PdfString, ShapedCluster,
-    ShapedScript, Stream, align_code, cluster_key, literal, matrix_number, n, shaped_glyph, type3_shaped, win_ansi,
+    ClusterKey, Content, Dict, Document, EditError, GlyphError, GlyphOutline, HashMap, HashSet, Object, PdfString, ShapedCluster, ShapedScript,
+    align_code, cluster_key, literal, matrix_number, n, shaped_glyph, type3_shaped, win_ansi,
 };
 
 fn font_name(base: &str) -> String {
@@ -169,6 +169,7 @@ pub(crate) fn draw_watermark_shaped(
         bold: false,
         italic: false,
         align: Align::Center,
+        aligns: Vec::new(),
         color: wm.color,
         rect: [0.0, 0.0, 1000.0, 1000.0],
         char_spacing: 0.0,
@@ -296,6 +297,7 @@ pub(crate) fn draw_header_footer_shaped(
         bold: false,
         italic: false,
         align: Align::Left,
+        aligns: Vec::new(),
         color: hf.color,
         rect: [0.0, 0.0, page_w, page_h],
         char_spacing: 0.0,

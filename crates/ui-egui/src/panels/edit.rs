@@ -311,8 +311,9 @@ fn format_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
         }
         let mut style = draft.style.clone();
         let paragraphs = crate::format_text_ui::Paragraphs { text: &draft.text, selection: draft.selection.clone(), tidy: true };
-        added_text_format(ui, t, &mut style, Some(paragraphs));
-        if style != draft.style {
+        let item_key = draft.index.map(|idx| (draft.page, idx));
+        let font_changed = added_text_format(ui, t, &mut style, item_key, Some(paragraphs));
+        if style != draft.style || font_changed {
             app.restyle_draft(i, style);
         }
         return;

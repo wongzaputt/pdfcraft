@@ -1,6 +1,8 @@
 use super::join::{check_join, join_radio_group};
 use super::look::{BorderStyle, FieldFont, da_string, patch_da, patch_widget_look, redraw_widgets};
-use super::tree::{ancestor_sets, attach, check_place, child_named, clash, detach, ensure_form, ensure_thai_font, form_fonts, inherited, name_parts, own_inherited};
+use super::tree::{
+    ancestor_sets, attach, check_place, child_named, clash, detach, ensure_form, ensure_thai_font, form_fonts, inherited, name_parts, own_inherited,
+};
 use super::{Dict, Document, Field, FieldKind, FieldProps, FormError, MIN_FIELD_SIDE, ObjRef, Object, PdfString, fields, flags, invalid};
 
 /// Swap width and height, keeping the center. `None` when that is not a usable widget.
