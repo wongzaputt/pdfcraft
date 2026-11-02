@@ -31,10 +31,10 @@ $ErrorActionPreference = 'Stop'
 $Root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 
 # Ensure cargo, dotnet tools (wix), and Windows SDK rc.exe are on PATH
-$dotnetDir = Join-Path $env:USERPROFILE '.dotnet'
+$dotnetDir = if (Test-Path 'C:\Program Files\dotnet\dotnet.exe') { 'C:\Program Files\dotnet' } else { Join-Path $env:USERPROFILE '.dotnet' }
 if (Test-Path $dotnetDir) {
   $env:DOTNET_ROOT = $dotnetDir
-  $env:Path = "$dotnetDir;$dotnetDir\tools;$env:Path"
+  $env:Path = "$dotnetDir;$env:USERPROFILE\.dotnet\tools;$env:Path"
 }
 $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
 if (-not (Get-Command 'rc.exe' -ErrorAction SilentlyContinue)) {
