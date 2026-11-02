@@ -55,6 +55,7 @@ pub(super) fn edit_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens, g
     // Format text at the top while text is selected or being added.
     format_section(app, ui, t);
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+        super::tools::clear_of_scrollbar(ui);
         widgets::section_title(ui, tl!("Modify page"));
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
@@ -185,6 +186,7 @@ pub(super) fn stamp_palette(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens
     use pdfcraft_engine::{StampGroup, StampKind};
     ui.label(egui::RichText::new(tl!("Choose a stamp, then click on the page to place it.")).small().color(t.text_faint));
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+        super::tools::clear_of_scrollbar(ui);
         for (group, title) in [
             (StampGroup::Dynamic, tl!("Dynamic")),
             (StampGroup::SignHere, tl!("Sign Here")),
@@ -266,11 +268,27 @@ fn format_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
             .into_iter()
             .map(|f| (f.resource, f.face))
             .collect();
-        let shown = ed.font_shown(&sources);
+        let fmt = ed.selection_formatting(&sources);
+        ed.sync_selection_look(&fmt);
+        let shown = fmt.font_shown;
+        let mixed_size = fmt.size.is_none();
         // A selection aligns the rows it touches; the caret alone, the whole paragraph.
         let paragraphs = crate::format_text_ui::Paragraphs { text: &ed.text, selection: ed.selection.clone(), tidy: false };
-        let out = crate::format_text_ui::panel(ui, t, &mut ed.look, Some(&mut ed.extras), Fonts { sources: Some(&sources), shown }, Some(paragraphs));
+        let out = crate::format_text_ui::panel(
+            ui,
+            t,
+            &mut ed.look,
+            Some(&mut ed.extras),
+            Fonts { sources: Some(&sources), shown, mixed_size },
+            Some(paragraphs),
+        );
+        if out.size_committed {
+            ed.choose_size(ed.look.size);
+        }
         let mut changed = out.changed;
+        if let Some(script) = out.script {
+            changed |= crate::edit_text_ui::toggle_script(&mut ed.text, &mut ed.selection, script);
+        }
         match out.font {
             Some(FontChoice::KeepSource) => {
                 ed.keep_source_font();
@@ -312,7 +330,13 @@ fn format_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
         let mut style = draft.style.clone();
         let paragraphs = crate::format_text_ui::Paragraphs { text: &draft.text, selection: draft.selection.clone(), tidy: true };
         let item_key = draft.index.map(|idx| (draft.page, idx));
-        let font_changed = added_text_format(ui, t, &mut style, item_key, Some(paragraphs));
+        let (out, font_changed) = added_text_format(ui, t, &mut style, item_key, Some(paragraphs));
+        if let Some(script) = out.script {
+            let mut toggled = draft.clone();
+            if crate::edit_text_ui::toggle_script(&mut toggled.text, &mut toggled.selection, script) {
+                app.views[i].content.draft = Some(toggled);
+            }
+        }
         if style != draft.style || font_changed {
             app.restyle_draft(i, style);
         }
@@ -350,7 +374,7 @@ fn format_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
     match selected {
         Some((page, index, text)) => {
             let mut style = text.clone();
-            let font_changed = added_text_format(ui, t, &mut style, Some((page, index)), None);
+            let (_, font_changed) = added_text_format(ui, t, &mut style, Some((page, index)), None);
             if style != text || font_changed {
                 // The reusable style follows the selection only when the edit took, so a refused one adds nothing odd later.
                 if app.apply_edit(pdfcraft_engine::Edit::UpdateContent { page, index, content: pdfcraft_engine::AddedContent::Text(style.clone()) }) {
@@ -376,7 +400,7 @@ fn added_text_format(
     style: &mut pdfcraft_engine::AddedText,
     item_key: Option<(usize, usize)>,
     paragraphs: Option<crate::format_text_ui::Paragraphs>,
-) -> bool {
+) -> (crate::format_text_ui::Outcome, bool) {
     let font_choice_id = match item_key {
         Some((page, index)) => egui::Id::unique(("added_text_format_font_choice", page, index)),
         None => egui::Id::unique("added_text_format_font_choice_new"),
@@ -385,11 +409,11 @@ fn added_text_format(
     let shown = chosen.filter(|(_, family)| *family == style.family).map(|(label, _)| label).unwrap_or_else(|| style.family.label().to_string());
     let mut font_changed = false;
 
-    let out = crate::format_text_ui::panel(ui, t, style, None, crate::format_text_ui::Fonts { sources: None, shown }, paragraphs);
-    match out.font {
+    let out = crate::format_text_ui::panel(ui, t, style, None, crate::format_text_ui::Fonts { sources: None, shown, mixed_size: false }, paragraphs);
+    match &out.font {
         Some(crate::format_text_ui::FontChoice::Family(family)) => {
-            style.family = family;
-            ui.data_mut(|d| d.insert_temp(font_choice_id, (family.label().to_string(), family)));
+            style.family = *family;
+            ui.data_mut(|d| d.insert_temp(font_choice_id, (family.label().to_string(), *family)));
             font_changed = true;
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -405,7 +429,7 @@ fn added_text_format(
             font_changed = true;
         }
         #[cfg(not(target_arch = "wasm32"))]
-        Some(crate::format_text_ui::FontChoice::Installed(path)) if pdfcraft_fonts::set_active_thai_font_by_path(&path).is_ok() => {
+        Some(crate::format_text_ui::FontChoice::Installed(path)) if pdfcraft_fonts::set_active_thai_font_by_path(path).is_ok() => {
             let cjk = crate::theme::CjkPreference::for_language(crate::i18n::current().code());
             ui.ctx().set_fonts(crate::theme::installed_font_definitions(cjk));
             if let Some(entry) = pdfcraft_fonts::active_thai_font_entry() {
@@ -415,7 +439,7 @@ fn added_text_format(
         }
         _ => {}
     }
-    font_changed
+    (out, font_changed)
 }
 
 impl PdfCraftApp {
