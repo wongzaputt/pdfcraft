@@ -216,6 +216,7 @@ pub struct MarksDraft {
     /// The page (0-based) the preview was stepped to; `None` previews the current page. Reset
     /// each time the dialog opens.
     pub preview: Option<usize>,
+    pub prior_thai_font: Option<pdfcraft_fonts::ThaiFontEntry>,
 }
 
 impl Default for MarksDraft {
@@ -235,6 +236,7 @@ impl Default for MarksDraft {
             file_page: 1,
             backdrops: BackdropCheck::default(),
             preview: None,
+            prior_thai_font: None,
         }
     }
 }
@@ -732,7 +734,13 @@ pub(crate) fn body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, kind: M
                     };
                     // Courier previews in the monospaced UI face, the others proportional.
                     let size = (hf.font_size as f32 * s).max(5.0);
-                    let font = if hf.font == FontFamily::Courier { egui::FontId::monospace(size) } else { egui::FontId::proportional(size) };
+                    let font = if let Some(font_name) = &hf.font_name {
+                        egui::FontId::new(size, egui::FontFamily::Name(font_name.as_str().into()))
+                    } else if hf.font == FontFamily::Courier {
+                        egui::FontId::monospace(size)
+                    } else {
+                        egui::FontId::proportional(size)
+                    };
                     p.text(pos2(x, y), align, shown, font, rgb32(hf.color));
                 }
             }

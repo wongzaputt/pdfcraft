@@ -26,6 +26,8 @@ pub struct PropsDraft {
     /// Acrobat's Make Properties Default box: on OK, new comments of this kind take the edited
     /// colour, opacity and line width too.
     pub make_default: bool,
+    pub prior_thai_font: Option<pdfcraft_fonts::ThaiFontEntry>,
+    pub preview_applied: bool,
 }
 
 const ICONS: [NoteIcon; 14] = NoteIcon::ALL;
@@ -120,7 +122,20 @@ impl PdfCraftApp {
     pub fn open_comment_props(&mut self, page: usize, index: usize) {
         let Some((_, id)) = self.active_ids() else { return };
         let Some(p) = self.session.get(id).and_then(|d| d.comment_props(page, index)) else { return };
-        self.comment_props = Some(PropsDraft { page, index, tab: PropsTab::Appearance, original: p.clone(), edited: p, make_default: false });
+        #[cfg(not(target_arch = "wasm32"))]
+        let prior_thai_font = pdfcraft_fonts::active_thai_font_entry();
+        #[cfg(target_arch = "wasm32")]
+        let prior_thai_font = None;
+        self.comment_props = Some(PropsDraft {
+            page,
+            index,
+            tab: PropsTab::Appearance,
+            original: p.clone(),
+            edited: p,
+            make_default: false,
+            prior_thai_font,
+            preview_applied: false,
+        });
         self.dialog = Some(crate::Dialog::CommentProps);
     }
 }
@@ -188,6 +203,8 @@ pub(crate) fn body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens) -> (boo
         crate::comments::tool_for_default(a, d.edited.endings.as_deref())
     });
     let Some(d) = app.comment_props.as_mut() else { return (false, true) };
+    let font_before = d.edited.font.clone();
+    let font_size_before = d.edited.font_size;
     let kind = tl!(crate::comments_panel::subtype_label(&d.edited.subtype)).to_string();
     ui.label(egui::RichText::new(crate::i18n::fmt(tl!("{kind} Properties"), &[("kind", &kind)])).font(theme::semibold(18.0)));
     ui.add_space(6.0);
@@ -335,5 +352,20 @@ pub(crate) fn body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens) -> (boo
             cancel = true;
         }
     });
+    let changed = d.edited.font != font_before || d.edited.font_size != font_size_before;
+    let (page, index) = (d.page, d.index);
+    let new_font = d.edited.font.clone();
+    let new_size = d.edited.font_size;
+    if changed {
+        d.preview_applied = true;
+    }
+    if changed {
+        if let Some(font) = new_font {
+            app.apply_edit(Edit::FontAnnotation { page, index, font });
+        }
+        if let Some(size) = new_size {
+            app.apply_edit(Edit::FontSizeAnnotation { page, index, size });
+        }
+    }
     (apply, cancel)
 }
