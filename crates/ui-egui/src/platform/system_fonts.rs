@@ -34,6 +34,8 @@ const SINHALA_PROBE: char = '\u{0D9A}';
 const TAMIL_PROBE: char = '\u{0B95}';
 /// Hebrew letter alef: the face must have it to cover Hebrew.
 const HEBREW_PROBE: char = '\u{05D0}';
+/// Thai letter ko kai (ก): the face must have it to cover Thai.
+const THAI_PROBE: char = '\u{0E01}';
 /// Hangul syllable hih (힣, U+D7A3), the last of the 11,172 modern syllables: a face with it has
 /// the whole block. Droid Sans Fallback, for one, has 가 but few other syllables.
 const HANGUL_PROBE: char = '\u{D7A3}';
@@ -113,6 +115,13 @@ pub fn tamil_fallback() -> Option<Arc<FontData>> {
 pub fn hebrew_fallback() -> Option<Arc<FontData>> {
     static CACHE: OnceLock<Option<Arc<FontData>>> = OnceLock::new();
     CACHE.get_or_init(|| script_fallback(&hebrew_candidates(), HEBREW_PROBE)).clone()
+}
+
+/// The installed fallback face for Thai, read once. `None` when it is turned off or no
+/// candidate is installed; the interface then draws what the embedded faces can.
+pub fn thai_fallback() -> Option<Arc<FontData>> {
+    static CACHE: OnceLock<Option<Arc<FontData>>> = OnceLock::new();
+    CACHE.get_or_init(|| script_fallback(&thai_candidates(), THAI_PROBE)).clone()
 }
 
 /// The installed fallback face for Hangul (Korean), read once. `None` when it is turned off or no
@@ -298,6 +307,40 @@ fn hebrew_candidates() -> Vec<PathBuf> {
             "TTF/DejaVuSans.ttf",
             "dejavu/DejaVuSans.ttf",
             "dejavu-sans-fonts/DejaVuSans.ttf",
+        ])
+    }
+}
+
+/// Well-known locations of Thai faces, best first.
+fn thai_candidates() -> Vec<PathBuf> {
+    if cfg!(windows) {
+        ["LeelawUI.ttf", "LeelaUIb.ttf", "leelawad.ttf", "leelawdb.ttf", "tahoma.ttf", "THSarabunNew.ttf", "Sarabun-Regular.ttf"]
+            .iter()
+            .map(|f| windows_fonts().join(f))
+            .collect()
+    } else if cfg!(target_os = "macos") {
+        [
+            "/System/Library/Fonts/Supplemental/Thonburi.ttc",
+            "/System/Library/Fonts/Supplemental/Ayuthaya.ttf",
+            "/System/Library/Fonts/Thonburi.ttc",
+            "/System/Library/Fonts/Supplemental/Sathu.ttf",
+            "/System/Library/Fonts/Supplemental/Silom.ttf",
+            "/System/Library/Fonts/Supplemental/Krungthep.ttf",
+            "/Library/Fonts/Arial Unicode.ttf",
+        ]
+        .iter()
+        .map(PathBuf::from)
+        .collect()
+    } else {
+        unix_fonts(&[
+            "truetype/noto/NotoSansThai-Regular.ttf",
+            "noto/NotoSansThai-Regular.ttf",
+            "google-noto/NotoSansThai-Regular.ttf",
+            "google-noto-vf/NotoSansThai[wght].ttf",
+            "truetype/tlwg/Loma.ttf",
+            "truetype/tlwg/Waree.ttf",
+            "truetype/tlwg/Garuda.ttf",
+            "truetype/thai/Sarabun-Regular.ttf",
         ])
     }
 }
@@ -540,13 +583,21 @@ mod tests {
         assert!(script_fallback(&candidates, HANGUL_PROBE).is_none());
         assert!(script_fallback(&candidates, SINHALA_PROBE).is_none());
         assert!(script_fallback(&candidates, TAMIL_PROBE).is_none());
+        assert!(script_fallback(&candidates, THAI_PROBE).is_none());
         assert!(script_fallback(&candidates, HEBREW_PROBE).is_none());
     }
 
     #[test]
     fn script_candidates_are_absolute_font_files() {
-        for list in [devanagari_candidates(), telugu_candidates(), sinhala_candidates(), tamil_candidates(), hebrew_candidates(), hangul_candidates()]
-        {
+        for list in [
+            devanagari_candidates(),
+            telugu_candidates(),
+            sinhala_candidates(),
+            tamil_candidates(),
+            thai_candidates(),
+            hebrew_candidates(),
+            hangul_candidates(),
+        ] {
             assert!(!list.is_empty());
             assert!(list.iter().all(|p| p.is_absolute() || cfg!(windows)), "{list:?}");
             assert!(list.iter().all(|p| p.extension().is_some_and(|e| e == "ttf" || e == "ttc")), "{list:?}");

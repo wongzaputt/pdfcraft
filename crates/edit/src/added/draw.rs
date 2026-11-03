@@ -95,11 +95,13 @@ pub(super) fn draw_laid_shaped(
         let font = type3_shaped(doc, chunk, &outlines);
         // A name no font on the page has, so items never replace each other's fonts (object
         // numbers alone don't do: a full save renumbers objects but keeps resource names).
-        let mut name = format!("PCAr{}", font.num);
+        let is_thai = chunk.iter().any(|c| c.script == ShapedScript::Thai);
+        let prefix = if is_thai { "PCTh" } else { "PCAr" };
+        let mut name = format!("{prefix}{}", font.num);
         let mut suffix = 0usize;
         while taken_names.contains(name.as_bytes()) {
             suffix = suffix.saturating_add(1);
-            name = format!("PCAr{}_{suffix}", font.num);
+            name = format!("{prefix}{}_{suffix}", font.num);
         }
         taken_names.insert(name.clone().into_bytes());
         fonts.set(name.clone().into_bytes(), Object::Ref(font));

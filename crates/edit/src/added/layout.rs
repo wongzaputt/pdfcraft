@@ -102,8 +102,23 @@ fn thai_lines(t: &AddedText, para: &str, width: f64) -> Result<Vec<String>, Edit
     Ok(lines)
 }
 
-pub(super) fn is_thai(c: char) -> bool {
+pub fn is_thai(c: char) -> bool {
     matches!(u32::from(c), 0x0E00..=0x0E7F)
+}
+
+/// Checks if a character belongs to supported complex scripts (Thai, Arabic, Hebrew, Indic/Devanagari,
+/// Vietnamese diacritics / Latin Extended).
+#[allow(dead_code)]
+pub fn is_complex_script(c: char) -> bool {
+    matches!(
+        u32::from(c),
+        0x0E00..=0x0E7F // Thai
+        | 0x0600..=0x06FF | 0x0750..=0x077F | 0x0870..=0x08FF | 0xFB50..=0xFDFF | 0xFE70..=0xFEFC // Arabic
+        | 0x0591..=0x05F4 | 0xFB1D..=0xFB4F // Hebrew
+        | 0x0900..=0x0D7F // Indic (Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada, Malayalam)
+        | 0x1EA0..=0x1EF9 // Vietnamese precomposed diacritics
+        | 0x0100..=0x024F // Latin Extended-A & B
+    )
 }
 
 /// Arabic letters, marks, digits and punctuation: an item with any of them is shaped with the
@@ -124,6 +139,9 @@ pub(super) fn is_hebrew(c: char) -> bool {
 /// keeps it open.
 pub fn first_undrawable(t: &AddedText) -> Option<char> {
     if t.text.chars().any(is_thai) {
+        if pdfcraft_fonts::document_thai_font().is_none() {
+            return t.text.chars().find(|c| is_thai(*c));
+        }
         if let Some(c) = t.text.chars().find(|c| is_thai(*c) && !pdfcraft_fonts::thai_has(*c)) {
             return Some(c);
         }
@@ -209,18 +227,21 @@ pub(super) fn shaped_layout(t: &AddedText, line: &str, rtl: bool) -> Result<(Vec
         // Arabic and Hebrew letters take their face; so do spaces and punctuation between them
         // (Hebrew's when they follow Hebrew), which the shaper then mirrors. Latin text (and what
         // the faces lack) keeps the item's font.
+        let line_has_thai = line.chars().any(is_thai);
         let mut segments: Vec<(Option<ShapedScript>, String)> = Vec::new();
         for c in text.chars().filter(|c| !is_bidi_control(*c)) {
             let after_hebrew = segments.last().is_some_and(|(kind, _)| *kind == Some(ShapedScript::Hebrew));
-            let script = if is_thai(c) {
-                Some(ShapedScript::Thai)
-            } else if is_hebrew(c) || (run_rtl && after_hebrew && !c.is_alphanumeric() && pdfcraft_fonts::hebrew_has(c)) {
-                Some(ShapedScript::Hebrew)
-            } else if is_arabic(c) || (run_rtl && !c.is_alphanumeric() && pdfcraft_fonts::arabic_has(c)) {
-                Some(ShapedScript::Arabic)
-            } else {
-                None
-            };
+            let after_thai = segments.last().is_some_and(|(kind, _)| *kind == Some(ShapedScript::Thai));
+            let script =
+                if is_thai(c) || ((line_has_thai || after_thai) && (c.is_ascii_digit() || (after_thai && c == ' ')) && pdfcraft_fonts::thai_has(c)) {
+                    Some(ShapedScript::Thai)
+                } else if is_hebrew(c) || (run_rtl && after_hebrew && !c.is_alphanumeric() && pdfcraft_fonts::hebrew_has(c)) {
+                    Some(ShapedScript::Hebrew)
+                } else if is_arabic(c) || (run_rtl && !c.is_alphanumeric() && pdfcraft_fonts::arabic_has(c)) {
+                    Some(ShapedScript::Arabic)
+                } else {
+                    None
+                };
             match segments.last_mut() {
                 Some((kind, s)) if *kind == script => s.push(c),
                 _ => segments.push((script, c.to_string())),
@@ -281,7 +302,7 @@ pub(super) fn hebrew_error(e: GlyphError, text: &str) -> EditError {
     })
 }
 
-pub(super) fn thai_error(e: GlyphError, text: &str) -> EditError {
+pub(crate) fn thai_error(e: GlyphError, text: &str) -> EditError {
     EditError::Invalid(match e {
         GlyphError::NoFont => {
             "Thai text needs a Thai font in this build; rebuild with CRAFT_FONTS_DIR pointing to craft-fonts with a Thai face".into()
