@@ -116,6 +116,127 @@ pub fn embed(doc: &mut Document, fonts: &mut Dict, bytes: &[u8], family: &str) -
     embed_mapping(doc, fonts, bytes, family, &mappings)
 }
 
+/// Embed a TrueType / OpenType font for shaped text using direct native GID addressing.
+///
+/// In this mode, CIDs in the content stream directly match the font's native Glyph IDs (GIDs).
+/// `/CIDToGIDMap` is set to the name `/Identity` (rather than a stream), `/Encoding` is
+/// `/Identity-H`, widths are indexed by GID, and `/ToUnicode` maps each GID to its Unicode cluster.
+pub fn embed_direct_truetype(
+    doc: &mut Document,
+    fonts: &mut Dict,
+    bytes: &[u8],
+    family: &str,
+    mappings: &[(String, skrifa::GlyphId)],
+) -> Result<String, String> {
+    validate(bytes)?;
+    if mappings.len() > 65_534 || mappings.iter().any(|(s, _)| s.len() > 4096) {
+        return Err("shaped font mapping exceeds its budget".into());
+    }
+    let font = FontRef::new(bytes).map_err(|e| e.to_string())?;
+    let loc = LocationRef::default();
+    let m = font.metrics(Size::unscaled(), loc);
+    let scale = 1000.0 / f64::from(m.units_per_em);
+    let advances = font.glyph_metrics(Size::unscaled(), loc);
+
+    // Deduplicate mappings by GID: collect unique GIDs, their widths, and ToUnicode mappings
+    let mut gid_to_unicode = std::collections::BTreeMap::new();
+    let mut gid_widths = std::collections::BTreeMap::new();
+
+    for (unicode, gid) in mappings {
+        let glyph = u16::try_from(gid.to_u32()).map_err(|_| "font glyph limit")?;
+        if glyph == 0 || u32::from(glyph) >= u32::from(m.glyph_count) {
+            return Err("font contains an unavailable shaped glyph".into());
+        }
+        let width = advances.advance_width(*gid).unwrap_or(0.0) as f64 * scale;
+        if !width.is_finite() || !(0.0..=16_000.0).contains(&width) {
+            return Err("font contains an invalid advance".into());
+        }
+        gid_widths.entry(glyph).or_insert(width);
+        gid_to_unicode.entry(glyph).or_insert_with(|| unicode.clone());
+    }
+
+    let mut cmap = String::from(
+        "/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n/CMapName /PCUnicode def\n/CMapType 2 def\n1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n",
+    );
+    let entries: Vec<(u16, &String)> = gid_to_unicode.iter().map(|(g, u)| (*g, u)).collect();
+    for chunk in entries.chunks(100) {
+        let _ = writeln!(cmap, "{} beginbfchar", chunk.len());
+        for (glyph, unicode) in chunk {
+            let hex: String = unicode.encode_utf16().map(|u| format!("{u:04X}")).collect();
+            let _ = writeln!(cmap, "<{glyph:04X}> <{hex}>");
+        }
+        cmap.push_str("endbfchar\n");
+    }
+    cmap.push_str("endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n");
+
+    let name = family.chars().filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_')).collect::<String>();
+    if name.is_empty() || name.len() > 128 {
+        return Err("the font family name is invalid".into());
+    }
+
+    let mut programs = ProgramMatch::new(bytes);
+    let mut descriptor = Dict::new();
+    descriptor.set(b"Type".to_vec(), Object::name("FontDescriptor"));
+    descriptor.set(b"FontName".to_vec(), Object::name(&name));
+    descriptor.set(b"FontFamily".to_vec(), Object::String(PdfString::literal(family.as_bytes().to_vec())));
+    descriptor.set(b"Flags".to_vec(), Object::Int(4));
+    descriptor.set(b"ItalicAngle".to_vec(), Object::Real(f64::from(m.italic_angle)));
+    descriptor.set(b"Ascent".to_vec(), Object::Real(f64::from(m.ascent) * scale));
+    descriptor.set(b"Descent".to_vec(), Object::Real(f64::from(m.descent) * scale));
+    descriptor.set(b"CapHeight".to_vec(), Object::Real(f64::from(m.cap_height.unwrap_or(m.ascent)) * scale));
+    descriptor.set(b"StemV".to_vec(), Object::Int(80));
+    let bounds = m.bounds.ok_or("font has no outline bounds")?;
+    descriptor.set(
+        b"FontBBox".to_vec(),
+        Object::Array([bounds.x_min, bounds.y_min, bounds.x_max, bounds.y_max].map(|v| Object::Real(f64::from(v) * scale)).to_vec()),
+    );
+
+    let existing = existing_program(doc, fonts, &mut programs);
+    let program = existing.unwrap_or_else(|| {
+        let mut d = Dict::new();
+        d.set(b"Length1".to_vec(), Object::Int(bytes.len() as i64));
+        d.set(b"PCFullFont".to_vec(), Object::Bool(true));
+        Object::Ref(doc.add(Object::Stream(Stream::flate(d, bytes))))
+    });
+    descriptor.set(b"FontFile2".to_vec(), program);
+    let desc = Object::Ref(doc.add(Object::Dict(descriptor)));
+
+    let mut system = Dict::new();
+    system.set(b"Registry".to_vec(), Object::String(PdfString::literal(b"Adobe".to_vec())));
+    system.set(b"Ordering".to_vec(), Object::String(PdfString::literal(b"Identity".to_vec())));
+    system.set(b"Supplement".to_vec(), Object::Int(0));
+
+    let mut cid = Dict::new();
+    cid.set(b"Type".to_vec(), Object::name("Font"));
+    cid.set(b"Subtype".to_vec(), Object::name("CIDFontType2"));
+    cid.set(b"BaseFont".to_vec(), Object::name(&name));
+    cid.set(b"CIDSystemInfo".to_vec(), Object::Dict(system));
+    cid.set(b"FontDescriptor".to_vec(), desc);
+    // Standard PDF 1.7 TrueType CIDFont direct GID mapping
+    cid.set(b"CIDToGIDMap".to_vec(), Object::name("Identity"));
+    cid.set(
+        b"W".to_vec(),
+        Object::Array(gid_widths.into_iter().flat_map(|(gid, w)| [Object::Int(i64::from(gid)), Object::Array(vec![Object::Real(w)])]).collect()),
+    );
+
+    let descendant = Object::Ref(doc.add(Object::Dict(cid)));
+    let mut top = Dict::new();
+    top.set(b"Type".to_vec(), Object::name("Font"));
+    top.set(b"Subtype".to_vec(), Object::name("Type0"));
+    top.set(b"BaseFont".to_vec(), Object::name(&name));
+    top.set(b"Encoding".to_vec(), Object::name("Identity-H"));
+    top.set(b"DescendantFonts".to_vec(), Object::Array(vec![descendant]));
+    top.set(b"ToUnicode".to_vec(), stream(doc, cmap.into_bytes()));
+
+    let mut index = 0usize;
+    while fonts.contains(format!("PCFull{index}").as_bytes()) {
+        index = index.saturating_add(1);
+    }
+    let resource = format!("PCFull{index}");
+    fonts.set(resource.as_bytes().to_vec(), Object::Ref(doc.add(Object::Dict(top))));
+    Ok(resource)
+}
+
 /// Explicit glyph mapping for shaped text. A CID can represent a contextual glyph or a
 /// ligature, while its ToUnicode retains the logical cluster. The full source program stays exact.
 pub fn embed_mapping(
