@@ -374,13 +374,5 @@ pub(crate) fn body(ui: &mut egui::Ui, d: &mut FieldDraft, t: &crate::theme::Toke
             cancel = true;
         }
     });
-    if cancel {
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Some(entry) = &d.prior_thai_font {
-            let _ = pdfcraft_fonts::set_active_thai_font_entry(entry);
-            let cjk = crate::theme::CjkPreference::for_language(crate::i18n::current().code());
-            ui.ctx().set_fonts(crate::theme::installed_font_definitions(cjk));
-        }
-    }
     (apply, cancel)
 }

@@ -318,18 +318,12 @@ fn dialog_body(ui: &mut egui::Ui, app: &mut PdfCraftApp, dialog: Dialog, req: &m
             req.apply = go;
             req.field_props_now = req.apply;
             req.close = req.apply || cancel;
-            if d.look != look_before {
+            if !req.close && d.look != look_before {
                 d.preview_applied = true;
                 if let Some(look) = d.look {
                     let field_name = d.field.clone();
-                    let preview_props = pdfcraft_engine::FieldProps {
-                        look: Some(look),
-                        ..Default::default()
-                    };
-                    app.apply_edit(pdfcraft_engine::Edit::SetFieldProps {
-                        name: field_name,
-                        props: Box::new(preview_props),
-                    });
+                    let preview_props = pdfcraft_engine::FieldProps { look: Some(look), ..Default::default() };
+                    app.apply_edit(pdfcraft_engine::Edit::SetFieldProps { name: field_name, props: Box::new(preview_props) });
                 }
             }
             return false;
@@ -1973,6 +1967,16 @@ fn finish_close(app: &mut PdfCraftApp, ctx: &egui::Context, dialog: Dialog, moda
         if !req.props_now
             && let Some(d) = app.comment_props.take()
         {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                if let Some(entry) = &d.prior_thai_font {
+                    let _ = pdfcraft_fonts::set_active_thai_font_entry(entry);
+                } else {
+                    pdfcraft_fonts::clear_active_thai_font();
+                }
+                let cjk = crate::theme::CjkPreference::for_language(crate::i18n::current().code());
+                ctx.set_fonts(crate::theme::installed_font_definitions(cjk));
+            }
             if d.preview_applied {
                 if let Some(font) = &d.original.font {
                     app.apply_edit(pdfcraft_engine::Edit::FontAnnotation { page: d.page, index: d.index, font: font.clone() });
@@ -1981,42 +1985,36 @@ fn finish_close(app: &mut PdfCraftApp, ctx: &egui::Context, dialog: Dialog, moda
                     app.apply_edit(pdfcraft_engine::Edit::FontSizeAnnotation { page: d.page, index: d.index, size });
                 }
             }
-            #[cfg(not(target_arch = "wasm32"))]
-            if let Some(entry) = &d.prior_thai_font {
-                let _ = pdfcraft_fonts::set_active_thai_font_entry(entry);
-                let cjk = crate::theme::CjkPreference::for_language(crate::i18n::current().code());
-                ctx.set_fonts(crate::theme::installed_font_definitions(cjk));
-            }
         }
         if !req.field_props_now
             && let Some(d) = app.field_props.take()
         {
-            if d.preview_applied {
-                if let Some(orig) = d.original.as_ref() {
-                    let field_name = d.field.clone();
-                    let rollback_props = pdfcraft_engine::FieldProps {
-                        look: orig.look,
-                        ..Default::default()
-                    };
-                    app.apply_edit(pdfcraft_engine::Edit::SetFieldProps {
-                        name: field_name,
-                        props: Box::new(rollback_props),
-                    });
-                }
-            }
             #[cfg(not(target_arch = "wasm32"))]
-            if let Some(entry) = &d.prior_thai_font {
-                let _ = pdfcraft_fonts::set_active_thai_font_entry(entry);
+            {
+                if let Some(entry) = &d.prior_thai_font {
+                    let _ = pdfcraft_fonts::set_active_thai_font_entry(entry);
+                } else {
+                    pdfcraft_fonts::clear_active_thai_font();
+                }
                 let cjk = crate::theme::CjkPreference::for_language(crate::i18n::current().code());
                 ctx.set_fonts(crate::theme::installed_font_definitions(cjk));
             }
+            if d.preview_applied
+                && let Some(orig) = d.original.as_ref()
+            {
+                let field_name = d.field.clone();
+                let rollback_props = pdfcraft_engine::FieldProps { look: orig.look, font_size: Some(orig.font_size), ..Default::default() };
+                app.apply_edit(pdfcraft_engine::Edit::SetFieldProps { name: field_name, props: Box::new(rollback_props) });
+            }
         }
-        if !req.marks_now
-            && matches!(dialog, Dialog::Marks(_))
-        {
+        if !req.marks_now && matches!(dialog, Dialog::Marks(_)) {
             #[cfg(not(target_arch = "wasm32"))]
-            if let Some(entry) = &app.marks_draft.prior_thai_font {
-                let _ = pdfcraft_fonts::set_active_thai_font_entry(entry);
+            {
+                if let Some(entry) = &app.marks_draft.prior_thai_font {
+                    let _ = pdfcraft_fonts::set_active_thai_font_entry(entry);
+                } else {
+                    pdfcraft_fonts::clear_active_thai_font();
+                }
                 let cjk = crate::theme::CjkPreference::for_language(crate::i18n::current().code());
                 ctx.set_fonts(crate::theme::installed_font_definitions(cjk));
             }

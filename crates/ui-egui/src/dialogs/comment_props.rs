@@ -356,10 +356,8 @@ pub(crate) fn body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens) -> (boo
     let (page, index) = (d.page, d.index);
     let new_font = d.edited.font.clone();
     let new_size = d.edited.font_size;
-    if changed {
+    if !cancel && changed {
         d.preview_applied = true;
-    }
-    if changed {
         if let Some(font) = new_font {
             app.apply_edit(Edit::FontAnnotation { page, index, font });
         }

@@ -2781,6 +2781,50 @@ fn text_box_properties_change_the_font_size() {
 }
 
 #[test]
+fn comment_properties_font_live_preview_cancel_rollbacks() {
+    use egui::accesskit::Role;
+    use pdfcraft_engine::{Edit, NewAnnotation, Shape};
+    let mut h = harness(|_| {});
+    let tb = NewAnnotation {
+        page: 0,
+        shape: Shape::TextBox { rect: [40.0, 600.0, 240.0, 640.0], font_size: 12.0 },
+        style: Default::default(),
+        contents: "Hello".into(),
+        author: "Ada".into(),
+    };
+    h.state_mut().apply_edit(Edit::AddAnnotation(tb));
+    h.run_steps(2);
+    h.state_mut().open_comment_props(0, 0);
+    h.run_steps(2);
+    let original_font = h.state().comment_props.as_ref().unwrap().original.font.clone();
+    assert_eq!(original_font.as_deref(), Some("Helvetica"));
+
+    // Select Courier in the font combo
+    let font_combo = h.query_all_by_role(Role::ComboBox).find(|n| n.value().as_deref() == Some("Helvetica")).expect("font combo");
+    font_combo.click();
+    h.run_steps(2);
+    h.get_by_label("Courier").click();
+    h.run_steps(2);
+
+    // Verify preview changed document font
+    let preview_font = h.state().session.get(h.state().views[0].id).unwrap().comment_props(0, 0).unwrap().font;
+    assert_eq!(preview_font.as_deref(), Some("Courier"));
+
+    // Click Cancel
+    h.get_by_label("Cancel").click();
+    h.run_steps(3);
+
+    // Document font must be rolled back
+    let doc_font = h.state().session.get(h.state().views[0].id).unwrap().comment_props(0, 0).unwrap().font;
+    assert_eq!(doc_font, original_font);
+
+    // Reopen comment props and verify draft also reflects original font
+    h.state_mut().open_comment_props(0, 0);
+    h.run_steps(2);
+    assert_eq!(h.state().comment_props.as_ref().unwrap().edited.font, original_font);
+}
+
+#[test]
 fn text_box_and_callout_properties_include_fill_and_thickness() {
     use pdfcraft_engine::{Edit, LineEnding, NewAnnotation, Shape};
     use pdfcraft_ui_egui::comments::CommentTool;
