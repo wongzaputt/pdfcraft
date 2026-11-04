@@ -92,10 +92,10 @@ pub struct AutoOcr {
 
 pub(crate) fn body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens) -> (bool, bool) {
     let pages = app.active_ids().and_then(|(_, id)| app.session.get(id)).map_or(1, |d| d.info.pages.len().max(1));
-    let available = pdfcraft_engine::ocr::available();
     let d = &mut app.ocr_draft;
     d.to = d.to.clamp(1, pages);
     d.from = d.from.clamp(1, d.to);
+    let available = pdfcraft_engine::ocr::available_for_lang(&d.language);
     ui.label(egui::RichText::new(tl!("Recognize Text")).font(theme::semibold(18.0)));
     ui.add_space(8.0);
     let group = |ui: &mut egui::Ui, title: &str, body: &mut dyn FnMut(&mut egui::Ui)| {
@@ -267,6 +267,7 @@ impl PdfCraftApp {
         } else {
             None
         };
+        let lang_code = settings.language.clone();
         let Some(job) = self.session.ocr_job(id, pages, settings) else { return };
         let progress = Arc::new(Mutex::new(OcrProgress { total: job.pages.len(), ..Default::default() }));
         let p = progress.clone();
@@ -275,7 +276,7 @@ impl PdfCraftApp {
         let work = move || {
             crate::i18n::set_current(lang);
             let result = recognize_guarded(|| {
-                pdfcraft_engine::ocr::engine().map(|ocr| {
+                pdfcraft_engine::ocr::engine_for_lang(&lang_code).map(|ocr| {
                     job.run(&ocr, |done, total| {
                         let Ok(mut s) = p.lock() else { return false };
                         s.done = done;
@@ -366,7 +367,7 @@ fn recognize_files(
     #[cfg(not(target_arch = "wasm32"))] dir: &std::path::Path,
 ) -> String {
     let (mut ok, mut words, mut failed) = (0, 0, Vec::new());
-    match pdfcraft_engine::ocr::engine() {
+    match pdfcraft_engine::ocr::engine_for_lang(&settings.language) {
         Err(e) => failed.push(e),
         Ok(ocr) => {
             for (i, (name, bytes)) in files.into_iter().enumerate() {
