@@ -31,3 +31,9 @@ impl From<pdfcraft_engine::EditError> for ToolError {
         failed(e)
     }
 }
+
+impl From<pdfcraft_fonts::GlyphError> for ToolError {
+    fn from(e: pdfcraft_fonts::GlyphError) -> Self {
+        failed(e)
+    }
+}

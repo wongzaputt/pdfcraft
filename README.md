@@ -20,6 +20,66 @@
   macOS · Windows · Linux · FreeBSD · the web
 </p>
 
+---
+
+## 🇹🇭 Special Edition: Thai Font & Complex Script Support (`feat/thai-font-support`)
+
+> [!NOTE]
+> **Branch Notice / คำชี้แจงสำหรับ Branch นี้:**  
+> Branch นี้ถูกสร้างขึ้นและพัฒนาต่อยอดเพื่อรองรับ**ภาษาไทยและการจัดวางสระ/วรรณยุกต์ซ้อนระดับลึก (Full Thai Complex Script & Typography Support)** โดยเฉพาะ ซึ่งมีตรรกะเฉพาะทางระดับ Engine จึงไม่ได้มีเป้าหมายเพื่อ merge กลับเข้าสู่ upstream repository
+> 
+> *This branch is dedicated to providing comprehensive, production-ready Thai typography and complex script rendering across PDF generation, interactive forms, annotations, and the UI.*
+
+<details open>
+<summary><b>📖 รายละเอียดการพัฒนาภาษาไทยใน Branch นี้ (Thai)</b></summary>
+
+### 1. ปัญหาของ PDF ดั้งเดิมกับภาษาไทย
+ในมาตรฐาน PDF และเอนจินของ PdfCraft ดั้งเดิม ตัวอักษรภาษาไทยมักประสบปัญหาใหญ่ 3 ประการ:
+1. **สระลอย / สระจม:** สระบน (อิ, อี, อึ, อือ) และวรรณยุกต์ (ไม้เอก, ไม้โท ฯลฯ) รวมถึงสระล่าง (อุ, อู, ฺ) ไม่สามารถจัดตำแหน่งสัมพันธ์กับพยัญชนะต้นที่มีหางสูง (ป, ฝ, ฟ) หรือพยัญชนะที่มีเชิง (ญ, ฐ) ได้อย่างถูกต้อง
+2. **ขอบกล่องตัดสระ (Clipping):** เมื่อมีการซ้อนสระและวรรณยุกต์ 3 ชั้น (เช่น พยัญชนะ + สระอิ + ไม้โท) ความสูงตัวอักษรจะเกินขอบ Bounding Box มาตรฐาน ทำให้ข้อความในฟอร์มหรือกรอบ Annotation ถูกขอบตัดขาด
+3. **การขาดหายของฟอนต์ในเอกสาร PDF:** Standard-14 fonts (Helvetica, Times, Courier) ไม่มี glyph ภาษาไทย ทำให้เมื่อวาด Appearance Stream จะกลายเป็นเครื่องหมาย `?` หรือกล่องสี่เหลี่ยมเต้าหู้ (tofu)
+
+### 2. สิ่งที่ได้รับการพัฒนาและปรับปรุงใน Branch นี้
+* **Full HarfBuzz Text Shaping & Type 3 Embedding (`crates/fonts/`):**
+  - ใช้ HarfBuzz (`harfrust`) ในการคำนวณ cluster ตัวอักษร, ligature, และตำแหน่งของสระ/วรรณยุกต์อย่างแม่นยำ
+  - แปลง glyph outlines ที่ผ่านการ shape แล้วเป็น **Type 3 PDF Font Representation** ฝังลงใน Appearance Streams ของเอกสาร PDF โดยตรง ทำให้เปิดอ่านบนโปรแกรม PDF viewer ใดๆ (เช่น Adobe Acrobat, Foxit, Edge, Chrome) ก็แสดงสระและวรรณยุกต์ได้ถูกต้อง 100% แม้ปลายทางจะไม่มีฟอนต์ติดตั้งอยู่ก็ตาม
+* **ระบบจัดระยะเผื่อสระซ้อน (Stacked Marks Headroom & No-Clip):**
+  - ในโมดูล Annotation (`crates/annot/`) และ Form Engine (`crates/forms/`) มีการคำนวณ headroom เผื่อความสูงสำหรับสระซ้อนและวรรณยุกต์บน-ล่าง ทำให้กล่องข้อความ FreeText, Typewriter, และ Form Fields ไม่ถูกตัดขอบ (no clipping)
+* **รองรับภาษาไทยในทุกเครื่องมือของ PDF (`crates/edit/`):**
+  - **Add Text:** พิมพ์ข้อความภาษาไทยลงบนหน้ากระดาษ พร้อมระบบจัดบรรทัดตามคำ (word wrapping)
+  - **Header & Footer:** แทรกหัวกระดาษและท้ายกระดาษภาษาไทยแบบไดนามิกพร้อมคำนวณตำแหน่งกลาง/ซ้าย/ขวาอย่างแม่นยำ
+  - **Watermark:** สร้างลายน้ำข้อความภาษาไทยแบบโปร่งใส (transparency & rotation) ได้อย่างสมบูรณ์
+* **UI Font Picker & System Fallback (`crates/ui-egui/`):**
+  - เพิ่มเมนูเลือกฟอนต์ภาษาไทยและฟอนต์ที่ติดตั้งอยู่ในระบบปฏิบัติการ (Windows: Leelawadee UI / Tahoma, macOS: Thonburi, Linux: Noto Sans Thai)
+  - เพิ่มระบบตรวจจับ Fallback Font ในหน้าต่างโปรแกรม ทำให้ชื่อแท็บ, เมนู, และชื่อไฟล์ภาษาไทยแสดงผลได้คมชัด ไม่เป็นกล่องเต้าหู้
+
+### 3. วิธีการ Build และรัน Branch นี้
+```bash
+# Clone เฉพาะ branch นี้
+git clone -b feat/thai-font-support https://github.com/wongzaputt/pdfcraft.git
+cd pdfcraft
+
+# รัน Desktop App ทันที
+cargo run --release -p pdfcraft-app
+
+# หรือทดสอบ CLI Tool
+cargo run --release -p pdfcraft-cli -- run --help
+```
+</details>
+
+<details>
+<summary><b>📖 English Overview & Technical Implementation</b></summary>
+
+### Key Technical Enhancements
+- **HarfBuzz Complex Text Shaping:** Integrates robust shaping pipelines (`crates/fonts/src/shaping.rs`) for accurate Thai consonant, vowel, and tone mark composition.
+- **Dynamic Type 3 Font Generation:** Converts shaped glyph paths into self-contained Type 3 PDF font objects within stream resources, eliminating the dependency on system fonts on external viewers.
+- **Stacked Marks Headroom & Bounding Box Calculation:** Custom vertical ascent and descent calculations in `crates/annot/` and `crates/forms/` preventing upper and lower diacritic clipping.
+- **Cross-Feature Integration:** Full Thai support for Add Text, Watermarks, Headers & Footers, AcroForms, and Annotations.
+- **UI Fallback & Font Picker:** Native Thai font candidate resolution on Windows, macOS, and Linux for seamless UI display.
+</details>
+
+---
+
 <p align="center">
   <img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-b70228?style=flat-square">
   <img alt="Written in Rust" src="https://img.shields.io/badge/written%20in-Rust-8a011e?style=flat-square">

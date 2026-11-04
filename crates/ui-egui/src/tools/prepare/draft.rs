@@ -151,7 +151,9 @@ pub struct FieldDraft {
     /// Actions tab: how many actions the document chains after each trigger's first one. They are
     /// kept when that first action is replaced.
     pub chained: Vec<(pdfcraft_engine::FieldTrigger, usize)>,
-    pub(super) original: Box<Option<FieldDraft>>,
+    pub prior_thai_font: Option<pdfcraft_fonts::ThaiFontEntry>,
+    pub preview_applied: bool,
+    pub original: Box<Option<FieldDraft>>,
 }
 
 pub(crate) fn da_size(da: &str) -> f64 {
@@ -216,6 +218,8 @@ impl FieldDraft {
             new_action: ActionDraft::default(),
             editing: None,
             chained: Vec::new(),
+            prior_thai_font: pdfcraft_fonts::active_thai_font_entry(),
+            preview_applied: false,
             original: Box::new(None),
         };
         d.original = Box::new(Some(d.clone()));

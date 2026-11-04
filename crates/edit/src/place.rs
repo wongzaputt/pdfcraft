@@ -28,7 +28,13 @@ pub(crate) fn contents(doc: &mut Document, page: &pdfcraft_model::Page) -> Resul
 }
 
 /// Add the font (and an opacity state) to the page's own resources.
-pub(crate) fn add_resources(doc: &mut Document, page: &pdfcraft_model::Page, opacity: Option<f64>, content: Option<&[u8]>) -> Result<(), EditError> {
+pub(crate) fn add_resources(
+    doc: &mut Document,
+    page: &pdfcraft_model::Page,
+    opacity: Option<f64>,
+    content: Option<&[u8]>,
+    extra_fonts: Option<&Dict>,
+) -> Result<(), EditError> {
     let mut faces: Vec<(Vec<u8>, &str)> = Vec::new();
     for (name, base) in [(&b"PCHelv"[..], "Helvetica"), (b"PCTimes", "Times-Roman"), (b"PCCour", "Courier")] {
         // Helvetica always (marks use it); the others only when the content names them.
@@ -37,7 +43,7 @@ pub(crate) fn add_resources(doc: &mut Document, page: &pdfcraft_model::Page, opa
         }
         faces.push((name.to_vec(), base));
     }
-    add_page_resources(doc, page, opacity, &faces)
+    add_page_resources(doc, page, opacity, &faces, extra_fonts)
 }
 
 /// The fonts a page draws with: its own resources' or the ones it inherits.
@@ -75,6 +81,7 @@ pub(crate) fn add_page_resources(
     page: &pdfcraft_model::Page,
     opacity: Option<f64>,
     faces: &[(Vec<u8>, &str)],
+    extra_fonts: Option<&Dict>,
 ) -> Result<(), EditError> {
     let mut res = page.dict.get(b"Resources").map(|r| doc.resolve(r)).and_then(|r| r.as_dict().cloned()).unwrap_or_default();
     let mut fonts = res.get(b"Font").map(|f| doc.resolve(f)).and_then(|f| f.as_dict().cloned()).unwrap_or_default();
@@ -85,6 +92,11 @@ pub(crate) fn add_page_resources(
         font.set(b"BaseFont".to_vec(), Object::name(base));
         font.set(b"Encoding".to_vec(), Object::name("WinAnsiEncoding"));
         fonts.set(name.clone(), Object::Dict(font));
+    }
+    if let Some(extra) = extra_fonts {
+        for (k, v) in extra.iter() {
+            fonts.set(k.clone(), v.clone());
+        }
     }
     res.set(b"Font".to_vec(), Object::Dict(fonts));
     if let Some(o) = opacity {
@@ -404,16 +416,24 @@ pub(crate) fn place_inside_wrapper(doc: &mut Document, page: &pdfcraft_model::Pa
 }
 
 /// Draw `content` on top of a page (0-based) as permanent page content, with standard Helvetica
+/// available as `/PCHelv` (and optional `extra_fonts`). The stream is tagged `tag` (not a mark kind, so Remove never takes
+/// it away); the original content is wrapped in q/Q first. Used for applied redaction boxes.
+/// Returns the new content stream.
+pub fn stamp_with_fonts(doc: &mut Document, page: usize, tag: &str, content: Vec<u8>, extra_fonts: Option<&Dict>) -> Result<ObjRef, EditError> {
+    let all = page_list(doc);
+    check(&[page], all.len())?;
+    check_on_top(doc, &all[page])?;
+    add_resources(doc, &all[page], None, Some(&content), extra_fonts)?;
+    let p = page_list(doc).swap_remove(page);
+    place_tagged(doc, &p, tag, content, false)
+}
+
+/// Draw `content` on top of a page (0-based) as permanent page content, with standard Helvetica
 /// available as `/PCHelv`. The stream is tagged `tag` (not a mark kind, so Remove never takes
 /// it away); the original content is wrapped in q/Q first. Used for applied redaction boxes.
 /// Returns the new content stream.
 pub fn stamp(doc: &mut Document, page: usize, tag: &str, content: Vec<u8>) -> Result<ObjRef, EditError> {
-    let all = page_list(doc);
-    check(&[page], all.len())?;
-    check_on_top(doc, &all[page])?;
-    add_resources(doc, &all[page], None, Some(&content))?;
-    let p = page_list(doc).swap_remove(page);
-    place_tagged(doc, &p, tag, content, false)
+    stamp_with_fonts(doc, page, tag, content, None)
 }
 
 pub(crate) fn begin(kind: MarkKind, subtype: &str, matrix: [f64; 6]) -> String {

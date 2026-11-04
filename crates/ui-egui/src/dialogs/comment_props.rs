@@ -26,6 +26,8 @@ pub struct PropsDraft {
     /// Acrobat's Make Properties Default box: on OK, new comments of this kind take the edited
     /// colour, opacity and line width too.
     pub make_default: bool,
+    pub prior_thai_font: Option<pdfcraft_fonts::ThaiFontEntry>,
+    pub preview_applied: bool,
 }
 
 const ICONS: [NoteIcon; 14] = NoteIcon::ALL;
@@ -120,7 +122,20 @@ impl PdfCraftApp {
     pub fn open_comment_props(&mut self, page: usize, index: usize) {
         let Some((_, id)) = self.active_ids() else { return };
         let Some(p) = self.session.get(id).and_then(|d| d.comment_props(page, index)) else { return };
-        self.comment_props = Some(PropsDraft { page, index, tab: PropsTab::Appearance, original: p.clone(), edited: p, make_default: false });
+        #[cfg(not(target_arch = "wasm32"))]
+        let prior_thai_font = pdfcraft_fonts::active_thai_font_entry();
+        #[cfg(target_arch = "wasm32")]
+        let prior_thai_font = None;
+        self.comment_props = Some(PropsDraft {
+            page,
+            index,
+            tab: PropsTab::Appearance,
+            original: p.clone(),
+            edited: p,
+            make_default: false,
+            prior_thai_font,
+            preview_applied: false,
+        });
         self.dialog = Some(crate::Dialog::CommentProps);
     }
 }
@@ -147,6 +162,11 @@ pub fn edits(d: &PropsDraft) -> Vec<Edit> {
         && let Some(size) = e.font_size.filter(|s| Some(*s) != o.font_size)
     {
         out.push(Edit::FontSizeAnnotation { page: d.page, index: d.index, size });
+    }
+    if e.restylable
+        && let Some(font) = e.font.as_ref().filter(|f| Some(*f) != o.font.as_ref())
+    {
+        out.push(Edit::FontAnnotation { page: d.page, index: d.index, font: font.clone() });
     }
     let author = (e.author != o.author).then(|| e.author.clone());
     let subject = (e.subject != o.subject).then(|| e.subject.clone());
@@ -183,6 +203,8 @@ pub(crate) fn body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens) -> (boo
         crate::comments::tool_for_default(a, d.edited.endings.as_deref())
     });
     let Some(d) = app.comment_props.as_mut() else { return (false, true) };
+    let font_before = d.edited.font.clone();
+    let font_size_before = d.edited.font_size;
     let kind = tl!(crate::comments_panel::subtype_label(&d.edited.subtype)).to_string();
     ui.label(egui::RichText::new(crate::i18n::fmt(tl!("{kind} Properties"), &[("kind", &kind)])).font(theme::semibold(18.0)));
     ui.add_space(6.0);
@@ -224,6 +246,35 @@ pub(crate) fn body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens) -> (boo
                         if let Some(f) = crate::comments::fill_picker(ui, e.fill) {
                             e.fill = f;
                         }
+                        ui.end_row();
+                    }
+                    if let Some(font) = e.font.as_mut() {
+                        ui.label(tl!("Font"));
+                        craft_ui::ComboBox::from_id_salt("comment-font").selected_text(font.as_str()).width(180.0).show_ui(ui, |ui| {
+                            ui.label(egui::RichText::new(tl!("Standard fonts")).small().color(t.text_muted));
+                            for f in ["Helvetica", "Times", "Courier"] {
+                                if ui.selectable_label(font == f, f).clicked() {
+                                    *font = f.to_string();
+                                }
+                            }
+                            #[cfg(not(target_arch = "wasm32"))]
+                            {
+                                let thai_fonts = pdfcraft_fonts::available_thai_fonts();
+                                if !thai_fonts.is_empty() {
+                                    ui.separator();
+                                    ui.label(egui::RichText::new(tl!("Thai / System fonts")).small().color(t.text_muted));
+                                    for entry in &thai_fonts {
+                                        if ui.selectable_label(font == &entry.name, &entry.name).clicked()
+                                            && pdfcraft_fonts::set_active_thai_font_by_path(&entry.path).is_ok()
+                                        {
+                                            *font = entry.name.clone();
+                                            let cjk = crate::theme::CjkPreference::for_language(crate::i18n::current().code());
+                                            ui.ctx().set_fonts(crate::theme::installed_font_definitions(cjk));
+                                        }
+                                    }
+                                }
+                            }
+                        });
                         ui.end_row();
                     }
                     if let Some(size) = e.font_size.as_mut() {
@@ -301,5 +352,18 @@ pub(crate) fn body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens) -> (boo
             cancel = true;
         }
     });
+    let changed = d.edited.font != font_before || d.edited.font_size != font_size_before;
+    let (page, index) = (d.page, d.index);
+    let new_font = d.edited.font.clone();
+    let new_size = d.edited.font_size;
+    if !cancel && changed {
+        d.preview_applied = true;
+        if let Some(font) = new_font {
+            app.apply_edit(Edit::FontAnnotation { page, index, font });
+        }
+        if let Some(size) = new_size {
+            app.apply_edit(Edit::FontSizeAnnotation { page, index, size });
+        }
+    }
     (apply, cancel)
 }

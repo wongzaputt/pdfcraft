@@ -1,6 +1,8 @@
 use super::join::{check_join, join_radio_group};
-use super::look::{BorderStyle, da_string, patch_da, patch_widget_look, redraw_widgets};
-use super::tree::{ancestor_sets, attach, check_place, child_named, clash, detach, ensure_form, inherited, name_parts, own_inherited};
+use super::look::{BorderStyle, FieldFont, da_string, patch_da, patch_widget_look, redraw_widgets};
+use super::tree::{
+    ancestor_sets, attach, check_place, child_named, clash, detach, ensure_form, ensure_thai_font, form_fonts, inherited, name_parts, own_inherited,
+};
 use super::{Dict, Document, Field, FieldKind, FieldProps, FormError, MIN_FIELD_SIDE, ObjRef, Object, PdfString, fields, flags, invalid};
 
 /// Swap width and height, keeping the center. `None` when that is not a usable widget.
@@ -13,6 +15,26 @@ fn swapped_around_center(r: [f64; 4]) -> Option<[f64; 4]> {
     let (nw, nh) = (y1 - y0, x1 - x0);
     let out = [cx - nw / 2.0, cy - nh / 2.0, cx + nw / 2.0, cy + nh / 2.0];
     (out.iter().all(|v| v.is_finite()) && out[2] - out[0] >= MIN_FIELD_SIDE && out[3] - out[1] >= MIN_FIELD_SIDE).then_some(out)
+}
+
+fn ensure_field_thai_font(doc: &mut Document, props: &FieldProps) -> Result<(), FormError> {
+    let explicit_thai =
+        props.look.as_ref().is_some_and(|l| l.font == FieldFont::Thai) || props.appearance.as_ref().is_some_and(|p| p.font == Some(FieldFont::Thai));
+    let default_has_thai = props.default_value.as_ref().and_then(|d| d.as_ref()).is_some_and(|d| d.chars().any(crate::appearance::is_thai));
+    if explicit_thai || default_has_thai {
+        ensure_thai_font(doc)?;
+        if explicit_thai {
+            let has_thai = ensure_form(doc).is_ok_and(|af| {
+                let af_dict = doc.get(af).as_dict().cloned().unwrap_or_default();
+                let (_, fonts) = form_fonts(doc, &af_dict);
+                fonts.contains(b"Thai")
+            });
+            if !has_thai {
+                return Err(FormError::Invalid("no Thai font is available for the form".into()));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Re-point a choice field's `/I`, positions in `/Opt`, at the new list `exports` after `/Opt` was
@@ -190,6 +212,7 @@ pub fn set_props(doc: &mut Document, name: &str, props: &FieldProps) -> Result<S
     if props.look.is_some() || props.appearance.is_some_and(|p| p.font.is_some()) {
         ensure_form(doc)?;
     }
+    ensure_field_thai_font(doc, props)?;
     let mut ff = f.flags;
     let mut set_flag = |flag: u32, on: Option<bool>| {
         if let Some(on) = on {

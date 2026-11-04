@@ -39,8 +39,8 @@ pub(crate) fn draw_appearance(doc: &mut Document, r: ObjRef) -> Result<(), Annot
 
 /// Draw the appearance for an annotation dictionary: the expensive half of [`set_appearance`].
 /// Pure from the dictionary and the objects it points at, so [`AppearanceCache`] can reuse it.
-fn build_appearance(doc: &Document, d: &Dict) -> Option<Stream> {
-    let mut stream = appearance::build(d)?;
+fn build_appearance(doc: &mut Document, d: &Dict) -> Option<Stream> {
+    let mut stream = appearance::build_with_doc(Some(doc), d)?;
     // Picture-stamp restyling must retain the placement's page-axis correction.
     if d.get(b"PCPicture").is_some() {
         let matrix = d.get(b"AP").and_then(|ap| {
@@ -188,10 +188,20 @@ pub fn with_missing_appearances_cached(doc: &Document, cache: &mut AppearanceCac
                 bare.remove(b"AP");
                 appearance::display_stamp(&bare)
             };
-            let Some(stream) = build_appearance(doc, &d).or_else(other_stamp) else { continue };
-            cache.insert(r, &stream);
+            let doc_copy = copy.get_or_insert_with(|| doc.clone());
+            let Some(stream) = build_appearance(doc_copy, &d).or_else(other_stamp) else { continue };
+            let has_t3 = stream
+                .dict
+                .get(b"Resources")
+                .and_then(Object::as_dict)
+                .and_then(|r| r.get(b"Font"))
+                .and_then(Object::as_dict)
+                .is_some_and(|fonts| fonts.contains(b"T3Thai"));
+            if !has_t3 {
+                cache.insert(r, &stream);
+            }
             // Fails only when `r` isn't a dictionary, which the build just ruled out.
-            apply_appearance(copy.get_or_insert_with(|| doc.clone()), r, &d, stream).ok();
+            apply_appearance(doc_copy, r, &d, stream).ok();
         }
     }
     copy

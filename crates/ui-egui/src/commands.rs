@@ -497,6 +497,7 @@ impl PdfCraftApp {
                 self.marks_draft.replace = id.ends_with(".update");
                 self.marks_draft.opened(kind);
                 self.marks_draft.preview = None;
+                self.marks_draft.prior_thai_font = pdfcraft_fonts::active_thai_font_entry();
                 self.dialog = Some(Dialog::Marks(kind));
             }
             "edit.bates" => {
@@ -508,6 +509,7 @@ impl PdfCraftApp {
                 }
                 self.marks_draft.focused_box = 5;
                 self.marks_draft.preview = None;
+                self.marks_draft.prior_thai_font = pdfcraft_fonts::active_thai_font_entry();
                 self.dialog = Some(Dialog::Marks(pdfcraft_engine::MarkKind::HeaderFooter));
             }
             "edit.header_footer.remove" | "edit.watermark.remove" | "edit.background.remove" => {

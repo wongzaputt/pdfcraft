@@ -398,7 +398,11 @@ impl Automation {
         let mut files = Vec::new();
         let mut used = std::collections::HashSet::new();
         for (i, (first, last, bytes)) in parts.iter().enumerate() {
-            let safe = |t: &str| t.chars().map(|c| if c.is_alphanumeric() || " -_.,()".contains(c) { c } else { '_' }).collect::<String>();
+            let safe = |t: &str| {
+                t.chars()
+                    .map(|c| if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') || c.is_control() { '_' } else { c })
+                    .collect::<String>()
+            };
             let mut base = match titles.iter().find(|t| t.0 + 1 == *first) {
                 Some((_, t)) => format!("{stem}-{}", safe(t)),
                 None => format!("{stem}-part{}", i + 1),

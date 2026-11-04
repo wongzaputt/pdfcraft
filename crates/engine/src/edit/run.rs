@@ -63,6 +63,7 @@ pub(crate) fn check_permission(edit: &Edit, p: &pdfcraft_cos::Permissions) -> Re
         | Edit::StyleAnnotation { .. }
         | Edit::FillAnnotation { .. }
         | Edit::FontSizeAnnotation { .. }
+        | Edit::FontAnnotation { .. }
         | Edit::SetAnnotationInfo { .. }
         | Edit::SetMeasurementScale { .. } => {
             if p.annotate() {
@@ -560,6 +561,7 @@ pub(crate) fn run_edit(doc: &mut pdfcraft_cos::Document, edit: &Edit, cx: &mut E
         }
         Edit::FillAnnotation { page, index, fill } => pdfcraft_annot::set_fill(doc, *page, *index, *fill, &cx.meta())?,
         Edit::FontSizeAnnotation { page, index, size } => pdfcraft_annot::set_font_size(doc, *page, *index, *size, &cx.meta())?,
+        Edit::FontAnnotation { page, index, font } => pdfcraft_annot::set_font(doc, *page, *index, font, &cx.meta())?,
         Edit::SetAnnotationInfo { page, index, author, subject, icon } => {
             pdfcraft_annot::set_info(doc, *page, *index, author.as_deref(), subject.as_deref(), *icon, &cx.meta())?;
         }
@@ -687,7 +689,8 @@ pub(crate) fn run_edit(doc: &mut pdfcraft_cos::Document, edit: &Edit, cx: &mut E
         Edit::RemoveStandardId { standard } => pdfcraft_organize::remove_standard_id(doc, *standard)?,
         Edit::SetDocumentScript { name, script } => pdfcraft_forms::set_document_script(doc, name, script.as_deref())?,
         Edit::AddOcrText { page, words } => {
-            pdfcraft_edit::stamp(doc, *page, "OCR", pdfcraft_ocr::text_layer(words))?;
+            let (content, fonts) = pdfcraft_ocr::text_layer_with_resources(words, doc);
+            pdfcraft_edit::stamp_with_fonts(doc, *page, "OCR", content, fonts.as_ref())?;
         }
         Edit::EditPageImage { page, index, change } => run_edit_page_image(doc, *page, *index, change)?,
         Edit::MoveObjects { page, objects, offset } => pdfcraft_edit::move_objects(doc, *page, objects, *offset)?,
