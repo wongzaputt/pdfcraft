@@ -17,14 +17,18 @@ pub use pdfcraft_fonts::helvetica_width;
 /// The model files, as named in ATTRIBUTION.toml.
 pub const DETECTION_MODEL: &str = "text-detection.onnx";
 pub const RECOGNITION_MODEL: &str = "text-recognition.onnx";
+pub const THAI_RECOGNITION_MODEL: &str = "text-recognition-tha.onnx";
 
 /// The recognition model's alphabet, as it was trained (ocrs-models' `DEFAULT_ALPHABET`): its
 /// output classes follow this order. The ocrs crate's own copy has an `E` where the training had
 /// `€`, which made a scanned "€250" read as "E250".
 pub const ALPHABET: &str = " 0123456789!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~€ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
-/// The languages the models read (ISO 639-1); all use the Latin alphabet without accents.
-pub const LANGUAGES: &[(&str, &str)] = &[("en", "English")];
+/// Thai Unicode block characters for OCR alphabet extension.
+pub const THAI_ALPHABET: &str = " กขฃคฅฆงจฉชซฌญฎฏฐฑฒณดตถทธนบปผฝพฟภมยรฤลฦวศษสหฬอฮฯะัาำิีึืฺุู฿เแโใไๅๆ็่้๊๋์ํ๎๏๐๑๒๓๔๕๖๗๘๙๚๛";
+
+/// The languages the models read (ISO 639-1).
+pub const LANGUAGES: &[(&str, &str)] = &[("en", "English"), ("tha", "Thai (ภาษาไทย)")];
 
 #[derive(Debug, thiserror::Error)]
 pub enum OcrError {
@@ -48,6 +52,20 @@ pub struct Models {
 }
 
 impl Models {
+    /// Look for models in `dir`, considering language.
+    pub fn in_dir_with_lang(dir: &Path, lang: &str) -> Option<Models> {
+        let is_thai = lang.eq_ignore_ascii_case("tha") || lang.starts_with("th");
+        if is_thai {
+            for (det, rec) in [(DETECTION_MODEL, THAI_RECOGNITION_MODEL), ("text-detection.rten", "text-recognition-tha.rten")] {
+                let m = Models { detection: dir.join(det), recognition: dir.join(rec) };
+                if m.detection.is_file() && m.recognition.is_file() {
+                    return Some(m);
+                }
+            }
+        }
+        Self::in_dir(dir)
+    }
+
     /// A complete model pair in `dir`, preferring current ONNX files over legacy RTEN files.
     /// An incomplete update never mixes formats or hides an intact legacy pair.
     pub fn in_dir(dir: &Path) -> Option<Models> {
@@ -60,7 +78,12 @@ impl Models {
     /// Look for the models: `$PDFCRAFT_MODELS`, then where the release packages install them
     /// beside the executable ([`Models::dirs_beside_exe`]), then the source tree's `assets/models/`.
     pub fn find() -> Option<Models> {
-        Self::search_dirs().iter().find_map(|d| Self::in_dir(d))
+        Self::find_with_lang("en")
+    }
+
+    /// Look for the models for `lang`.
+    pub fn find_with_lang(lang: &str) -> Option<Models> {
+        Self::search_dirs().iter().find_map(|d| Self::in_dir_with_lang(d, lang))
     }
 
     /// The directories [`Models::find`] looks in, in order.
@@ -113,11 +136,31 @@ pub struct Ocr {
 
 impl Ocr {
     pub fn load(models: &Models) -> Result<Ocr, OcrError> {
+        Self::load_with_alphabet(models, ALPHABET)
+    }
+
+    pub fn load_with_lang(models: &Models, lang: &str) -> Result<Ocr, OcrError> {
+        let is_thai = lang.eq_ignore_ascii_case("tha") || lang.starts_with("th");
+        if is_thai {
+            // Combined Thai alphabet
+            let mut alpha = ALPHABET.to_string();
+            for c in THAI_ALPHABET.chars() {
+                if !alpha.contains(c) {
+                    alpha.push(c);
+                }
+            }
+            Self::load_with_alphabet(models, &alpha)
+        } else {
+            Self::load(models)
+        }
+    }
+
+    pub fn load_with_alphabet(models: &Models, alphabet: &str) -> Result<Ocr, OcrError> {
         let load = |p: &Path| rten::Model::load_file(p).map_err(|e| OcrError::Load(p.display().to_string(), e.to_string()));
         let params = ocrs::OcrEngineParams {
             detection_model: Some(load(&models.detection)?),
             recognition_model: Some(load(&models.recognition)?),
-            alphabet: Some(ALPHABET.into()),
+            alphabet: Some(alphabet.into()),
             ..Default::default()
         };
         let engine = ocrs::OcrEngine::new(params).map_err(|e| OcrError::Load("ocr engine".into(), e.to_string()))?;
@@ -127,6 +170,12 @@ impl Ocr {
     /// Load the models found by [`Models::find`].
     pub fn find() -> Result<Ocr, OcrError> {
         Self::load(&Models::find().ok_or(OcrError::NoModels)?)
+    }
+
+    /// Load the models found by [`Models::find_with_lang`].
+    pub fn find_with_lang(lang: &str) -> Result<Ocr, OcrError> {
+        let models = Models::find_with_lang(lang).ok_or(OcrError::NoModels)?;
+        Self::load_with_lang(&models, lang)
     }
 
     /// Recognise the text in an RGBA (or RGB, or grey) image, `width` × `height` pixels.
@@ -212,6 +261,181 @@ fn num(v: f64) -> String {
     let s = format!("{:.4}", if v.abs() < 1e-9 { 0.0 } else { v });
     let s = s.trim_end_matches('0').trim_end_matches('.');
     if s == "-0" { "0".into() } else { s.into() }
+}
+
+use pdfcraft_cos::{Dict, Document, Object};
+
+type OwnedClusterKey = (pdfcraft_fonts::ShapedScript, String, Vec<(u32, u64, u64)>, u64);
+
+fn owned_cluster_key(c: &pdfcraft_fonts::ShapedCluster) -> OwnedClusterKey {
+    (c.script, c.text.clone(), c.glyphs.iter().map(|(id, [x, y])| (*id, x.to_bits(), y.to_bits())).collect(), c.advance.to_bits())
+}
+
+/// Whether `c` is a Thai combining character (vowel mark, tone mark, diacritic).
+pub fn is_thai_combining(c: char) -> bool {
+    matches!(u32::from(c), 0x0E31 | 0x0E34..=0x0E3A | 0x0E47..=0x0E4E)
+}
+
+/// Whether `c` is a Thai upper/lower vowel mark (sara i, ii, ue, uee, u, uu, phinthu, etc.).
+fn is_thai_vowel_mark(c: char) -> bool {
+    matches!(u32::from(c), 0x0E31 | 0x0E34..=0x0E3A)
+}
+
+/// Whether `c` is a Thai tone mark or diacritic (mai ek, tho, tri, chattawa, thanthakhat, etc.).
+fn is_thai_tone_or_diacritic(c: char) -> bool {
+    matches!(u32::from(c), 0x0E47..=0x0E4E)
+}
+
+/// Normalize Thai text for OCR and search:
+/// 1. Reorders tone marks and thanthakhat that appear before vowel marks (e.g., `ก + ่ + ิ` -> `ก + ิ + ่`),
+///    ensuring canonical orthographical Unicode ordering.
+/// 2. Decomposes sara am (`ำ`, U+0E33) if preceded by a tone mark to standard canonical order (`ัํ` + tone + `า`).
+/// 3. Reattaches or preserves combining marks properly so HarfBuzz shaper and ToUnicode produce correct clusters.
+pub fn normalize_thai_text(text: &str) -> String {
+    if !text.chars().any(pdfcraft_fonts::is_thai) {
+        return text.to_string();
+    }
+
+    let mut out: Vec<char> = Vec::with_capacity(text.len());
+    for c in text.chars() {
+        if is_thai_tone_or_diacritic(c) {
+            // Check if immediately preceding character was a vowel mark that should precede this tone mark (normal).
+            // But if a vowel mark comes *after* this tone mark, we will swap when that vowel arrives.
+            out.push(c);
+        } else if is_thai_vowel_mark(c) {
+            // If previous char in `out` is a tone mark or diacritic, swap them so vowel comes before tone mark!
+            if let Some(&prev) = out.last()
+                && is_thai_tone_or_diacritic(prev)
+            {
+                let tone = out.pop().unwrap_or(prev);
+                out.push(c);
+                out.push(tone);
+                continue;
+            }
+            out.push(c);
+        } else {
+            out.push(c);
+        }
+    }
+
+    out.into_iter().collect()
+}
+
+/// Generate text layer content and optional font resources for words.
+/// For words containing Thai characters, shapes them and creates Type 3 font resources with ToUnicode mapping.
+/// For Latin words, uses `/PCHelv`.
+pub fn text_layer_with_resources(words: &[PlacedWord], doc: &mut Document) -> (Vec<u8>, Option<Dict>) {
+    // Normalize Thai words first to ensure canonical combining mark ordering (vowel before tone).
+    let normalized_words: Vec<PlacedWord> = words
+        .iter()
+        .map(|w| {
+            if w.text.chars().any(pdfcraft_fonts::is_thai) {
+                let norm = normalize_thai_text(&w.text);
+                PlacedWord { text: norm, origin: w.origin, across: w.across, up: w.up }
+            } else {
+                w.clone()
+            }
+        })
+        .collect();
+    let words = &normalized_words;
+
+    let has_thai = words.iter().any(|w| w.text.chars().any(pdfcraft_fonts::is_thai));
+    if !has_thai {
+        return (text_layer(words), None);
+    }
+
+    let mut unique_clusters = Vec::new();
+    let mut seen_keys = std::collections::HashSet::new();
+    for w in words {
+        if w.text.chars().any(pdfcraft_fonts::is_thai)
+            && let Ok(clusters) = pdfcraft_fonts::shape_thai(&w.text)
+        {
+            for c in clusters {
+                let key = owned_cluster_key(&c);
+                if seen_keys.insert(key.clone()) {
+                    unique_clusters.push((key, c));
+                }
+            }
+        }
+    }
+
+    let mut t3_fonts = Vec::new();
+    let mut cluster_font_map = std::collections::HashMap::new();
+    for (chunk_idx, chunk) in unique_clusters.chunks(240).enumerate() {
+        let chunk_refs: Vec<&pdfcraft_fonts::ShapedCluster> = chunk.iter().map(|(_, c)| c).collect();
+        if let Ok(t3) = pdfcraft_fonts::type3_for_clusters(doc, &chunk_refs) {
+            let font_name = if chunk_idx == 0 { "T3Thai".to_string() } else { format!("T3Thai{chunk_idx}") };
+            t3_fonts.push((t3, font_name));
+            for (local_idx, (key, _)) in chunk.iter().enumerate() {
+                cluster_font_map.insert(key.clone(), (chunk_idx, local_idx));
+            }
+        }
+    }
+
+    let mut font_dict = Dict::new();
+    for (t3_ref, font_name) in &t3_fonts {
+        font_dict.set(font_name.as_bytes().to_vec(), Object::Ref(*t3_ref));
+    }
+
+    let mut out = b"/OCR BMC\nq\nBT\n3 Tr\n/PCHelv 1 Tf\n".to_vec();
+    for w in words {
+        let height = w.up[0].hypot(w.up[1]);
+        if height <= 0.0 {
+            continue;
+        }
+
+        if w.text.chars().any(pdfcraft_fonts::is_thai) && !t3_fonts.is_empty() {
+            if let Ok(clusters) = pdfcraft_fonts::shape_thai(&w.text) {
+                let total_adv: f64 = clusters.iter().map(|c| c.advance).sum();
+                if total_adv <= 0.0 {
+                    continue;
+                }
+                let across_len = w.across[0].hypot(w.across[1]);
+                if across_len <= 0.0 {
+                    continue;
+                }
+                let scale_x = w.across[0] / total_adv;
+                let scale_y = w.across[1] / total_adv;
+                let up_x = w.up[0] / BOX_EM;
+                let up_y = w.up[1] / BOX_EM;
+                let m = [scale_x, scale_y, up_x, up_y, w.origin[0], w.origin[1]];
+                let nums: Vec<String> = m.iter().map(|v| num(*v)).collect();
+                out.extend_from_slice(nums.join(" ").as_bytes());
+                out.extend_from_slice(b" Tm\n");
+
+                let mut current_font_idx: Option<usize> = None;
+                for c in &clusters {
+                    let key = owned_cluster_key(c);
+                    if let Some(&(chunk_idx, local_idx)) = cluster_font_map.get(&key) {
+                        if current_font_idx != Some(chunk_idx) {
+                            let font_res = &t3_fonts[chunk_idx].1;
+                            out.extend(format!("/{} 1 Tf ", font_res).bytes());
+                            current_font_idx = Some(chunk_idx);
+                        }
+                        out.extend(format!("<{:02X}> Tj\n", local_idx + 1).bytes());
+                    }
+                }
+                out.extend_from_slice(b"/PCHelv 1 Tf\n");
+            }
+        } else {
+            let width = helvetica_width(&w.text, 1.0);
+            if width <= 0.0 {
+                continue;
+            }
+            let (top, bottom) = ink_extent(&w.text);
+            let em = [w.up[0] / (top - bottom), w.up[1] / (top - bottom)];
+            let ax = [w.across[0] / width, w.across[1] / width];
+            let o = [w.origin[0] - em[0] * bottom, w.origin[1] - em[1] * bottom];
+            let m = [ax[0], ax[1], em[0], em[1], o[0], o[1]];
+            let nums: Vec<String> = m.iter().map(|v| num(*v)).collect();
+            out.extend_from_slice(nums.join(" ").as_bytes());
+            out.extend_from_slice(b" Tm ");
+            out.extend(pdfcraft_fonts::literal(&pdfcraft_fonts::win_ansi(&w.text)));
+            out.extend_from_slice(b" Tj\n");
+        }
+    }
+    out.extend_from_slice(b"ET\nQ\nEMC\n");
+    (out, if font_dict.is_empty() { None } else { Some(font_dict) })
 }
 
 /// Page content that writes `words` as invisible text in `/PCHelv` (standard Helvetica,
@@ -441,6 +665,44 @@ mod tests {
         assert!(text.iter().any(|t| t.contains("HELL") && t.contains("WOR")), "{text:?}");
         let word = lines.iter().flat_map(|l| &l.words).find(|w| w.text.contains("HELL")).unwrap();
         assert!(word.rect[0] >= 10.0 && word.rect[0] < 60.0, "{word:?}");
+    }
+
+    #[test]
+    fn normalize_thai_text_reorders_reversed_marks() {
+        // Reversed vowel and tone: ย + ่ (U+0E48) + ู (U+0E39) -> ย + ู + ่ ("ยู่")
+        let reversed_yu = "ย\u{0E48}\u{0E39}";
+        assert_eq!(normalize_thai_text(reversed_yu), "ยู่");
+
+        // Reversed vowel and tone: ม + ่ (U+0E48) + ู (U+0E39) -> ม + ู + ่ ("มู่")
+        let reversed_mu = "ม\u{0E48}\u{0E39}";
+        assert_eq!(normalize_thai_text(reversed_mu), "มู่");
+
+        // Normal order remains unchanged
+        assert_eq!(normalize_thai_text("อยู่บ้าน"), "อยู่บ้าน");
+        assert_eq!(normalize_thai_text("หมู่ที่"), "หมู่ที่");
+        assert_eq!(normalize_thai_text("ไปรษณีย์"), "ไปรษณีย์");
+        assert_eq!(normalize_thai_text("หมายเลขโทรศัพท์"), "หมายเลขโทรศัพท์");
+        assert_eq!(normalize_thai_text("English text 123"), "English text 123");
+    }
+
+    #[test]
+    fn text_layer_with_resources_handles_thai() {
+        let mut doc = Document::new_empty();
+        let words = [PlacedWord {
+            text: "ภาษาไทย".into(),
+            origin: [100.0, 200.0],
+            across: [80.0, 0.0],
+            up: [0.0, 15.0],
+        }];
+        let (content, fonts) = text_layer_with_resources(&words, &mut doc);
+        let s = String::from_utf8(content).unwrap();
+        assert!(s.contains("3 Tr"));
+        if pdfcraft_fonts::document_thai_font().is_some() {
+            assert!(s.contains("/T3Thai 1 Tf"), "{s}");
+            assert!(fonts.is_some(), "Should produce font dictionary for Thai");
+            let f = fonts.unwrap();
+            assert!(f.get(b"T3Thai").is_some());
+        }
     }
 
     mod test_image {

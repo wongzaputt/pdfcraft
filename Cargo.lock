@@ -4506,6 +4506,7 @@ name = "pdfcraft-ocr"
 version = "0.18.1"
 dependencies = [
  "ocrs",
+ "pdfcraft-cos",
  "pdfcraft-fonts",
  "rten",
  "tempfile",
