@@ -282,6 +282,9 @@ pub struct TypedLook {
 /// border goes around the box sized to the text, so the text sits where it would without one.
 pub fn typed_with(page: usize, at: [f64; 2], text: &str, size: f64, rotation: i64, author: &str, look: TypedLook) -> Edit {
     let width = valid_text_border(look.border.width).unwrap_or(0.0);
+    // Thai text sits lower in its box: shift the origin down so it lines up with Latin text.
+    let has_thai = text.chars().any(pdfcraft_fonts::is_thai);
+    let at = if has_thai { pdfcraft_engine::displayed_offset(rotation, at, 0.0, size * 0.45) } else { at };
     // A circle goes around the text, so its box is no wider than the text needs.
     let [x0, y0, x1, y1] = if width > 0.0 && look.border.shape == BorderShape::Circle {
         crate::comments::snug_text_box_rect(at, text, size, rotation)

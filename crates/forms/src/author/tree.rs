@@ -43,8 +43,25 @@ pub(crate) fn ensure_form(doc: &mut Document) -> Result<ObjRef, FormError> {
     Ok(r)
 }
 
+/// Ensure that the AcroForm has a Thai font resource `/DR /Font /Thai` embedded, if a Thai font is available.
+pub fn ensure_thai_font(doc: &mut Document) -> Result<(), FormError> {
+    let af = ensure_form(doc)?;
+    let mut af_dict = doc.get(af).as_dict().cloned().unwrap_or_default();
+    let (dr, mut fonts) = form_fonts(doc, &af_dict);
+    if !fonts.contains(b"Thai")
+        && let Some(thai_font) = pdfcraft_fonts::document_thai_font()
+        && let Ok(res) = pdfcraft_fonts::embedding::embed(doc, &mut fonts, thai_font.bytes, thai_font.family)
+        && let Some(obj) = fonts.get(res.as_bytes()).cloned()
+    {
+        fonts.set(b"Thai".to_vec(), obj);
+        store_form_fonts(doc, &mut af_dict, dr, fonts);
+        doc.set(af, Object::Dict(af_dict));
+    }
+    Ok(())
+}
+
 /// The form dictionary's `/DR` and its `/Font` dictionary, resolved (empty where missing).
-fn form_fonts(doc: &Document, af: &Dict) -> (Dict, Dict) {
+pub(crate) fn form_fonts(doc: &Document, af: &Dict) -> (Dict, Dict) {
     let dr = af.get(b"DR").map(|o| doc.resolve(o)).and_then(|o| o.as_dict().cloned()).unwrap_or_default();
     let fonts = dr.get(b"Font").map(|o| doc.resolve(o)).and_then(|o| o.as_dict().cloned()).unwrap_or_default();
     (dr, fonts)

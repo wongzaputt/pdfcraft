@@ -485,23 +485,55 @@ impl Automation {
         let color =
             |key: &str, default: [f64; 3]| -> Result<[f64; 3]> { Ok(a.opt_str(key)?.map(comments::parse_color).transpose()?.unwrap_or(default)) };
         let replace = a.opt_bool("replace")?.unwrap_or(false);
+        let mut thai_entry = None;
         let edit = match tool {
             "doc_header_footer" => {
                 let mut hf = HeaderFooter::default();
                 for (k, key) in ["header_left", "header_center", "header_right", "footer_left", "footer_center", "footer_right"].iter().enumerate() {
                     hf.text[k] = a.opt_str(key)?.unwrap_or_default().to_string();
                 }
+                if let Some(font) = a.opt_str("font")? {
+                    if font.trim().is_empty() {
+                        return Err(ToolError::InvalidArgs("font cannot be empty".into()));
+                    }
+                    if font.eq_ignore_ascii_case("times") || font.eq_ignore_ascii_case("times-roman") || font.eq_ignore_ascii_case("times roman") {
+                        hf.font = pdfcraft_engine::FontFamily::Times;
+                    } else if font.eq_ignore_ascii_case("courier") {
+                        hf.font = pdfcraft_engine::FontFamily::Courier;
+                    } else if font.eq_ignore_ascii_case("helvetica") {
+                        hf.font = pdfcraft_engine::FontFamily::Helvetica;
+                    } else {
+                        let lower = font.to_lowercase();
+                        let thai_fonts = pdfcraft_fonts::available_thai_fonts();
+                        let found = thai_fonts.iter().find(|e| {
+                            let matches_name = e.file_name.to_lowercase() == lower
+                                || e.name.to_lowercase() == lower
+                                || e.family.to_lowercase() == lower
+                                || e.file_name.to_lowercase().contains(&lower)
+                                || e.name.to_lowercase().contains(&lower)
+                                || e.family.to_lowercase().contains(&lower);
+                            if !matches_name {
+                                return false;
+                            }
+                            if e.path.as_os_str().is_empty() {
+                                return true;
+                            }
+                            self.check_roots(&e.file_name, &e.path, file_access::Access::Read).is_ok()
+                                && self.root.as_ref().is_none_or(|r| e.path.starts_with(r))
+                        });
+                        if let Some(entry) = found {
+                            hf.font_name = Some(entry.file_name.clone());
+                            thai_entry = Some(entry.clone());
+                        } else {
+                            return Err(ToolError::InvalidArgs(format!(
+                                "font must be \"Helvetica\", \"Times\", \"Courier\", or an installed Thai font, not {font:?}"
+                            )));
+                        }
+                    }
+                }
                 if let Some(s) = a.opt_num("font_size")? {
                     hf.font_size = s;
                 }
-                hf.font = match a.opt_str("font")? {
-                    None | Some("Helvetica") => pdfcraft_engine::FontFamily::Helvetica,
-                    Some("Times") => pdfcraft_engine::FontFamily::Times,
-                    Some("Courier") => pdfcraft_engine::FontFamily::Courier,
-                    Some(other) => {
-                        return Err(ToolError::InvalidArgs(format!("font must be \"Helvetica\", \"Times\" or \"Courier\", not {other:?}")));
-                    }
-                };
                 hf.color = color("color", hf.color)?;
                 if let Some(m) = a.get("margins").and_then(Value::as_array) {
                     let m: Vec<f64> = m.iter().filter_map(Value::as_f64).collect();
@@ -558,7 +590,21 @@ impl Automation {
                 Edit::RemoveMarks { kind }
             }
         };
-        self.apply(a, edit)
+        if let Some(entry) = thai_entry {
+            let prev_entry = pdfcraft_fonts::active_thai_font_entry();
+            pdfcraft_fonts::set_active_thai_font_entry(&entry).map_err(|e| ToolError::Failed(e.to_string()))?;
+            let res = self.apply(a, edit);
+            if res.is_err() {
+                if let Some(prev) = prev_entry {
+                    let _ = pdfcraft_fonts::set_active_thai_font_entry(&prev);
+                } else {
+                    pdfcraft_fonts::clear_active_thai_font();
+                }
+            }
+            res
+        } else {
+            self.apply(a, edit)
+        }
     }
 
     pub(crate) fn export(&mut self, tool: &str, a: &Args) -> Result<Value> {

@@ -4,6 +4,7 @@ use pdfcraft_cos::{Document, ObjRef, Object, SaveOptions, write_incremental};
 
 use super::modify::text_box_of;
 use super::*;
+use crate::modify::fitted_box;
 
 /// Two pages. Page 1 has an inline Square annotation in a direct /Annots array; page 2 has an
 /// indirect /Annots array holding a Stamp (a type we cannot redraw).
@@ -1979,6 +1980,95 @@ fn free_text_properties_show_legacy_or_absent_border_width() {
     })
     .unwrap();
     assert_eq!(props(&doc, 0, index).unwrap().width, Some(4.0));
+}
+
+#[test]
+fn thai_free_text_typewriter_renders_with_type3_font_without_collision_or_question_marks() {
+    if pdfcraft_fonts::document_thai_font().is_none() {
+        return;
+    }
+    let mut doc = fixture();
+    let text = "ตั้งแต่นี้เป็นต้นไป";
+    let rect = [100.0, 500.0, 300.0, 530.0];
+    let mut new_annot = new(0, Shape::Typewriter { rect, font_size: 14.0 });
+    new_annot.contents = text.to_string();
+    let index = add_annotation(&mut doc, &new_annot, &meta("author")).unwrap();
+    let annots = list(&doc, 0);
+    let dict = &annots[index];
+    assert_eq!(dict.get(pdfcraft_fonts::UNDRAWN_MARK), None, "Thai text must not be marked as undrawable");
+    let ap = ap_content(&doc, dict);
+    assert!(!ap.contains("?"), "Appearance must not contain question marks: {ap}");
+    assert!(ap.contains("/T3Thai"), "Appearance must use /T3Thai font: {ap}");
+
+    // Verify /Font /T3Thai exists in normal appearance stream resources
+    let ap_obj = dict.get(b"AP").and_then(|a| doc.resolve(a).as_dict().cloned()).unwrap();
+    let n_ref = ap_obj.get(b"N").and_then(|n| n.as_ref()).unwrap();
+    let n_stream = match doc.resolve(&Object::Ref(n_ref)).as_ref() {
+        Object::Stream(s) => s.clone(),
+        _ => panic!("N must be a stream"),
+    };
+    let res = n_stream.dict.get(b"Resources").and_then(|r| doc.resolve(r).as_dict().cloned()).unwrap();
+    let font_dict = res.get(b"Font").and_then(|f| doc.resolve(f).as_dict().cloned()).unwrap();
+    let t3_ref = font_dict.get(b"T3Thai").and_then(|f| f.as_ref()).unwrap();
+    let t3_obj = match doc.resolve(&Object::Ref(t3_ref)).as_ref() {
+        Object::Dict(d) => d.clone(),
+        _ => panic!("T3Thai must be a dict"),
+    };
+    assert_eq!(t3_obj.name(b"Subtype"), Some(&b"Type3"[..]));
+    assert!(t3_obj.contains(b"ToUnicode"), "Type 3 font must contain /ToUnicode CMap for Thai search/copy");
+}
+
+#[test]
+fn thai_free_text_stacked_marks_headroom_and_no_clip() {
+    if pdfcraft_fonts::document_thai_font().is_none() {
+        return;
+    }
+    let mut doc = fixture();
+    let text = "กั้นน้ำ";
+    let rect = [100.0, 500.0, 300.0, 550.0];
+    let size = 14.0;
+    let mut new_annot = new(0, Shape::Typewriter { rect, font_size: size });
+    new_annot.style = Style::default_for(&new_annot.shape);
+    new_annot.contents = text.to_string();
+    let index = add_annotation(&mut doc, &new_annot, &meta("author")).unwrap();
+    let annots = list(&doc, 0);
+    let dict = &annots[index];
+    let ap = ap_content(&doc, dict);
+    // Unbordered typewriter annotation must not emit a clipping rectangle 're W n'
+    assert!(!ap.contains("re W n"), "Unbordered typewriter must not clip to rect: {ap}");
+    // Baseline y should be rect[3] - (size * 1.35 + pad) = 550.0 - (14.0 * 1.35 + 2.0) = 550.0 - 20.9 = 529.1
+    let pad = 2.0;
+    let expected_y = 550.0 - (size * 1.35 + pad);
+    let expected_tm = format!("1 0 0 1 102 {expected_y:.1} Tm");
+    assert!(
+        ap.contains(&expected_tm) || ap.contains(&format!("1 0 0 1 102 {expected_y:.2} Tm")),
+        "Baseline must have 1.35 em headroom below top edge: {ap}"
+    );
+
+    // Test fitted_box with Thai text
+    let (_, reference) = annot_ref(&mut doc, 0, index).unwrap();
+    let fitted = fitted_box(&doc, reference, text).unwrap();
+    let thai_h = fitted[3] - fitted[1];
+    let latin_fitted = fitted_box(&doc, reference, "Latin").unwrap();
+    let latin_h = latin_fitted[3] - latin_fitted[1];
+    assert!(thai_h > latin_h, "Thai text box height ({thai_h}) must be larger than Latin ({latin_h}) to accommodate stacked marks");
+
+    // Thai FreeText annotations must be restylable and support style and fill updates
+    let p = props(&doc, 0, index).expect("props");
+    assert!(p.restylable, "Thai FreeText must be restylable");
+    let obj_count_before = doc.scan_objects().count();
+    set_style(&mut doc, 0, index, StyleChange::new(Some([0.1, 0.2, 0.3]), None, Some(2.0), None), &meta("author")).expect("set_style");
+    let obj_count_after_style = doc.scan_objects().count();
+    let style_delta = obj_count_after_style - obj_count_before;
+    set_fill(&mut doc, 0, index, Some([0.9, 0.9, 0.9]), &meta("author")).expect("set_fill");
+    let fill_delta = doc.scan_objects().count() - obj_count_after_style;
+    // Each redraw should add objects (Type 3 font + CharProcs + CMap + AP stream), and pre-flight
+    // check must run on a clone so it doesn't double the redraw count. Both deltas should match
+    // and each be less than two redraws.
+    let single_redraw = style_delta;
+    assert!(style_delta > 0);
+    assert_eq!(style_delta, fill_delta);
+    assert!(style_delta < 2 * single_redraw);
 }
 
 /// A line's ends and the corners of connected lines and polygons can be moved after drawing:

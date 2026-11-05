@@ -226,6 +226,8 @@ pub struct Props {
     pub fill_opacity: Option<f64>,
     /// How opaque a text box's, typewriter text's or callout's text is drawn.
     pub text_opacity: Option<f64>,
+    /// Text boxes, typewriter text and callouts: the font name.
+    pub font: Option<String>,
 }
 
 /// The current properties of the comment at `(page, index)`.
@@ -252,7 +254,7 @@ pub fn props(doc: &Document, page: usize, index: usize) -> Option<Props> {
         width,
         icon: (subtype == "Text").then(|| d.name(b"Name").and_then(|n| NoteIcon::from_name(&String::from_utf8_lossy(n))).unwrap_or(NoteIcon::Note)),
         modified: text_value(doc, d, b"M"),
-        restylable: appearance::build(d).is_some(),
+        restylable: appearance::build_with_doc(Some(&mut doc.clone()), d).is_some(),
         locked: annotation_flags(doc, d) & FLAG_LOCKED != 0,
         fillable: fillable(&subtype),
         fill: fill_of(d),
@@ -261,6 +263,31 @@ pub fn props(doc: &Document, page: usize, index: usize) -> Option<Props> {
         border_shape: (subtype == "FreeText" && !d.contains(b"CL")).then(|| BorderShape::of(d)),
         fill_opacity: fillable(&subtype).then(|| appearance::part_opacity(d).fill),
         text_opacity: (subtype == "FreeText").then(|| appearance::part_opacity(d).text),
+        font: (subtype == "FreeText").then(|| {
+            if let Some(f) = d.get(b"PCFont").and_then(Object::as_string).map(PdfString::to_text) {
+                return f;
+            }
+            let text = text_value(doc, d, b"Contents").unwrap_or_default();
+            if text.chars().any(pdfcraft_fonts::is_thai) {
+                return pdfcraft_fonts::active_thai_font_entry().map(|e| e.name).unwrap_or_else(|| "Sarabun".to_string());
+            }
+            let da = d.get(b"DA").and_then(|o| o.as_string()).map(|s| String::from_utf8_lossy(&s.bytes).into_owned()).unwrap_or_default();
+            let toks: Vec<&str> = da.split_whitespace().collect();
+            for (i, t) in toks.iter().enumerate() {
+                if *t == "Tf" && i >= 2 {
+                    let font_tok = toks[i - 2].trim_start_matches('/');
+                    if font_tok.eq_ignore_ascii_case("times") || font_tok.eq_ignore_ascii_case("times-roman") || font_tok.eq_ignore_ascii_case("tiro")
+                    {
+                        return "Times".to_string();
+                    } else if font_tok.eq_ignore_ascii_case("cour") || font_tok.eq_ignore_ascii_case("courier") {
+                        return "Courier".to_string();
+                    } else if font_tok.eq_ignore_ascii_case("helv") || font_tok.eq_ignore_ascii_case("helvetica") {
+                        return "Helvetica".to_string();
+                    }
+                }
+            }
+            "Helvetica".to_string()
+        }),
         subtype,
         endings: line_endings_of(d),
     })

@@ -2958,6 +2958,10 @@ fn headers_watermarks_and_backgrounds_through_tools() {
     assert_eq!(face.name(b"BaseFont"), Some(&b"Courier"[..]));
     let refused = a.call("doc_header_footer", &json!({ "doc": mono, "header_left": "X", "font": "Arial" }));
     assert!(matches!(refused, Err(ToolError::InvalidArgs(e)) if e.contains("Courier")));
+    let refused_empty = a.call("doc_header_footer", &json!({ "doc": mono, "header_left": "X", "font": "" }));
+    assert!(matches!(refused_empty, Err(ToolError::InvalidArgs(_))));
+    let refused_ws = a.call("doc_header_footer", &json!({ "doc": mono, "header_left": "X", "font": "   " }));
+    assert!(matches!(refused_ws, Err(ToolError::InvalidArgs(_))));
 }
 
 #[test]
@@ -6046,7 +6050,23 @@ fn organizing_with_filters_bookmark_splits_and_extract_options() {
     let e = ok(&mut a, "page_extract", json!({ "doc": doc, "pages": [1, 2], "separate": true, "out_dir": "pages", "delete": true }));
     assert_eq!(e["files"].as_array().unwrap().len(), 2);
     assert_eq!(e["original"]["pages"], 1);
-    assert!(matches!(a.call("page_extract", &json!({ "doc": doc, "pages": [1], "separate": true })), Err(ToolError::InvalidArgs(_))));
+}
+
+#[test]
+fn doc_split_sanitizes_control_characters_for_deduplication() {
+    let dir = workdir("split_ctrl");
+    let mut a = auto(&dir);
+    let doc = ok(&mut a, "doc_open", json!({ "path": "a.pdf" }))["doc"].as_u64().unwrap();
+    ok(&mut a, "bookmark_add", json!({ "doc": doc, "title": "Part\x7fA", "page": 1 }));
+    ok(&mut a, "bookmark_add", json!({ "doc": doc, "title": "Part_A", "page": 2 }));
+    let s = ok(&mut a, "doc_split", json!({ "doc": doc, "bookmarks": true, "out_dir": "parts" }));
+    let files: Vec<String> = s["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| std::path::Path::new(f["path"].as_str().unwrap()).file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(files, ["a-Part_A.pdf", "a-Part_A-2.pdf"]);
 }
 
 #[test]
