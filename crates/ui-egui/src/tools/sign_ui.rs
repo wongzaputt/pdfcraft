@@ -214,6 +214,19 @@ fn id_dir() -> Option<PathBuf> {
 /// read it: it holds the private key.
 fn save_new_id_file(dir: &std::path::Path, stem: &str, p12: &[u8]) -> std::io::Result<PathBuf> {
     use std::io::{ErrorKind, Write};
+    // Max component length on most filesystems is 255 bytes. Collision suffix is up to " 10000.p12" (10 bytes).
+    // Reserve at least 10 bytes for the extension/suffix so the whole filename stays within 255 bytes.
+    let max_stem_bytes = 255usize.saturating_sub(10);
+    let truncated_stem = if stem.len() > max_stem_bytes {
+        let mut end = max_stem_bytes;
+        while end > 0 && !stem.is_char_boundary(end) {
+            end = end.saturating_sub(1);
+        }
+        &stem[..end]
+    } else {
+        stem
+    };
+    let stem = if truncated_stem.is_empty() { "_" } else { truncated_stem };
     for i in 1..=10_000u32 {
         let path = dir.join(if i == 1 { format!("{stem}.p12") } else { format!("{stem} {i}.p12") });
         let mut opts = std::fs::OpenOptions::new();
@@ -406,8 +419,21 @@ impl PdfCraftApp {
             None => id_dir(),
         }
         .ok_or("There is no folder to save the digital ID in.")?;
-        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-        let stem: String = d.name.trim().chars().map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' { c } else { '_' }).collect();
+        let mut stem: String = d
+            .name
+            .trim()
+            .chars()
+            .map(|c| if !matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\0'..='\x1f') { c } else { '_' })
+            .collect();
+        let device = stem.split('.').next().unwrap_or_default().to_ascii_uppercase();
+        let reserved = matches!(device.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+            || (device.len() == 4
+                && (device.starts_with("COM") || device.starts_with("LPT"))
+                && device.as_bytes().get(3).is_some_and(|d| (b'1'..=b'9').contains(d)));
+        if reserved {
+            stem.insert(0, '_');
+        }
+        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         let path = save_new_id_file(&dir, &stem, &p12).map_err(|e| e.to_string())?;
         Ok(self.add_digital_id(&path.to_string_lossy(), &cert))
     }

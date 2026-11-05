@@ -307,6 +307,45 @@ fn appearance_tab_restyles_the_field() {
 }
 
 #[test]
+fn field_properties_font_live_preview_cancel_rollbacks() {
+    use pdfcraft_engine::FieldFont;
+    let mut h = harness();
+    h.state_mut().execute("form.prepare");
+    h.run_steps(2);
+    h.state_mut().open_field_props("city", 0);
+    h.run_steps(2);
+    h.get_by_label("Appearance").click();
+    h.run_steps(2);
+    use egui::accesskit::Role;
+    let original_font = h.state().field_props.as_ref().unwrap().look.unwrap().font;
+    assert_eq!(original_font, FieldFont::Helvetica);
+
+    // Click the font ComboBox and pick Times
+    let font_combo = h.query_all_by_role(Role::ComboBox).find(|n| n.value().as_deref() == Some("Helvetica")).expect("font combo");
+    font_combo.click();
+    h.run_steps(2);
+    h.get_by_label("Times Roman").click();
+    h.run_steps(2);
+
+    // Verify draft changed and preview edit was applied to the document
+    let preview_look = h.state().session.get(h.state().views[0].id).unwrap().field_look("city").unwrap();
+    assert_eq!(preview_look.font, FieldFont::Times);
+
+    // Now click Cancel
+    h.get_by_label("Cancel").click();
+    h.run_steps(3);
+
+    // Document must have rolled back to original font
+    let doc_look = h.state().session.get(h.state().views[0].id).unwrap().field_look("city").unwrap();
+    assert_eq!(doc_look.font, original_font);
+
+    // Re-open properties and ensure the draft also shows original font
+    h.state_mut().open_field_props("city", 0);
+    h.run_steps(2);
+    assert_eq!(h.state().field_props.as_ref().unwrap().look.unwrap().font, original_font);
+}
+
+#[test]
 fn appearance_tab_keeps_auto_font_size() {
     let mut h = harness();
     h.state_mut().execute("form.prepare");

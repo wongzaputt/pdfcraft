@@ -226,6 +226,8 @@ pub const SYSTEM_TELUGU_FALLBACK: &str = "system-telugu-fallback";
 pub const SYSTEM_SINHALA_FALLBACK: &str = "system-sinhala-fallback";
 /// The name of the installed Tamil face [`installed_font_definitions`] may add.
 pub const SYSTEM_TAMIL_FALLBACK: &str = "system-tamil-fallback";
+/// The name of the installed Thai face [`installed_font_definitions`] may add.
+pub const SYSTEM_THAI_FALLBACK: &str = "system-thai-fallback";
 /// The name of the installed Hebrew face [`installed_font_definitions`] may add.
 pub const SYSTEM_HEBREW_FALLBACK: &str = "system-hebrew-fallback";
 /// The name of the installed Hangul (Korean) face [`installed_font_definitions`] may add.
@@ -280,6 +282,7 @@ pub fn installed_font_definitions(cjk: CjkPreference) -> FontDefinitions {
             (SYSTEM_TELUGU_FALLBACK, crate::system_fonts::telugu_fallback()),
             (SYSTEM_SINHALA_FALLBACK, crate::system_fonts::sinhala_fallback()),
             (SYSTEM_TAMIL_FALLBACK, crate::system_fonts::tamil_fallback()),
+            (SYSTEM_THAI_FALLBACK, crate::system_fonts::thai_fallback()),
             (SYSTEM_HEBREW_FALLBACK, crate::system_fonts::hebrew_fallback()),
             (SYSTEM_HANGUL_FALLBACK, crate::system_fonts::hangul_fallback()),
         ] {

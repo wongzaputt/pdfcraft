@@ -498,6 +498,8 @@ fn text_boxes_fit_their_text() {
     let long = text_box_rect([0.0, 500.0], &"word ".repeat(80), 12.0, 0);
     assert_eq!(long[2], 300.0);
     assert!(long[3] - long[1] > 50.0);
+    let thai = text_box_rect([100.0, 500.0], "กั้นน้ำ", 12.0, 0);
+    assert!(thai[3] - thai[1] > r[3] - r[1], "Thai text box height must exceed Latin for stacked marks");
 }
 
 /// The hover outline goes round the comment a press under the pointer would take (the top hit

@@ -218,6 +218,7 @@ pub struct MarksDraft {
     /// The page (0-based) the preview was stepped to; `None` previews the current page. Reset
     /// each time the dialog opens.
     pub preview: Option<usize>,
+    pub prior_thai_font: Option<pdfcraft_fonts::ThaiFontEntry>,
 }
 
 impl Default for MarksDraft {
@@ -237,6 +238,7 @@ impl Default for MarksDraft {
             file_page: 1,
             backdrops: BackdropCheck::default(),
             preview: None,
+            prior_thai_font: None,
         }
     }
 }
@@ -479,9 +481,42 @@ pub(crate) fn body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, kind: M
             ui.horizontal(|ui| {
                 // The standard faces a header can be drawn in (#3754).
                 ui.label(tl!("Font:"));
-                craft_ui::ComboBox::from_id_salt("hf-font").selected_text(d.hf.font.label()).width(100.0).show_ui(ui, |ui| {
+                let current_font_name = d.hf.font_name.clone().unwrap_or_else(|| d.hf.font.label().to_string());
+                craft_ui::ComboBox::from_id_salt("hf-font").selected_text(&current_font_name).width(160.0).show_ui(ui, |ui| {
+                    ui.label(egui::RichText::new(tl!("Standard fonts")).small().color(t.text_muted));
                     for f in [FontFamily::Helvetica, FontFamily::Times, FontFamily::Courier] {
-                        ui.selectable_value(&mut d.hf.font, f, f.label());
+                        let selected = d.hf.font_name.is_none() && d.hf.font == f;
+                        if ui.selectable_label(selected, f.label()).clicked() {
+                            d.hf.font = f;
+                            d.hf.font_name = None;
+                        }
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        let thai_fonts = pdfcraft_fonts::available_thai_fonts();
+                        if !thai_fonts.is_empty() {
+                            ui.separator();
+                            ui.label(egui::RichText::new(tl!("Thai fonts")).small().color(t.text_muted));
+                            for entry in &thai_fonts {
+                                let selected = d.hf.font_name.as_deref() == Some(&entry.name);
+                                if ui.selectable_label(selected, &entry.name).clicked() {
+                                    if pdfcraft_fonts::set_active_thai_font_by_path(&entry.path).is_ok() {
+                                        let cjk = crate::theme::CjkPreference::for_language(crate::i18n::current().code());
+                                        ui.ctx().set_fonts(crate::theme::installed_font_definitions(cjk));
+                                    }
+                                    if entry.family.eq_ignore_ascii_case("TlwgTypewriter")
+                                        || entry.family.eq_ignore_ascii_case("Tlwg Typewriter")
+                                        || entry.family.contains("Mono")
+                                        || entry.family.contains("Typewriter")
+                                    {
+                                        d.hf.font = FontFamily::Courier;
+                                    } else {
+                                        d.hf.font = FontFamily::Helvetica;
+                                    }
+                                    d.hf.font_name = Some(entry.name.clone());
+                                }
+                            }
+                        }
                     }
                 });
                 ui.label(tl!("Size"));
@@ -565,6 +600,33 @@ pub(crate) fn body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, kind: M
                             crate::widgets::block(&mut d.wm.text).desired_rows(2).desired_width(320.0).hint_text("CONFIDENTIAL").id_salt("wm-text"),
                         );
                     });
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if !d.use_file {
+                        let thai_fonts = pdfcraft_fonts::available_thai_fonts();
+                        if !thai_fonts.is_empty() {
+                            ui.horizontal(|ui| {
+                                ui.label(tl!("Thai fonts"));
+                                let current_title =
+                                    pdfcraft_fonts::active_thai_font_entry().map(|e| e.name).unwrap_or_else(|| "TlwgTypewriter".to_string());
+                                craft_ui::ComboBox::from_id_salt("wm-thai-font-selector").selected_text(current_title).width(180.0).show_ui(
+                                    ui,
+                                    |ui| {
+                                        for entry in &thai_fonts {
+                                            let selected = pdfcraft_fonts::active_thai_font_entry()
+                                                .as_ref()
+                                                .is_some_and(|curr| curr.file_name.eq_ignore_ascii_case(&entry.file_name));
+                                            if ui.selectable_label(selected, &entry.name).clicked()
+                                                && pdfcraft_fonts::set_active_thai_font_by_path(&entry.path).is_ok()
+                                            {
+                                                let cjk = crate::theme::CjkPreference::for_language(crate::i18n::current().code());
+                                                ui.ctx().set_fonts(crate::theme::installed_font_definitions(cjk));
+                                            }
+                                        }
+                                    },
+                                );
+                            });
+                        }
+                    }
                     ui.horizontal(|ui| {
                         ui.add_enabled_ui(!d.use_file, |ui| ui.add(widgets::checkbox(&mut d.fit, tl!("Fit to page"))));
                         ui.add_enabled_ui(!d.fit, |ui| {
@@ -674,7 +736,13 @@ pub(crate) fn body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, kind: M
                     };
                     // Courier previews in the monospaced UI face, the others proportional.
                     let size = (hf.font_size as f32 * s).max(5.0);
-                    let font = if hf.font == FontFamily::Courier { egui::FontId::monospace(size) } else { egui::FontId::proportional(size) };
+                    let font = if let Some(font_name) = &hf.font_name {
+                        egui::FontId::new(size, egui::FontFamily::Name(font_name.as_str().into()))
+                    } else if hf.font == FontFamily::Courier {
+                        egui::FontId::monospace(size)
+                    } else {
+                        egui::FontId::proportional(size)
+                    };
                     p.text(pos2(x, y), align, shown, font, rgb32(hf.color));
                 }
             }
@@ -896,6 +964,12 @@ mod tests {
         assert_eq!(undrawable(MarkKind::HeaderFooter, &d), None);
         d.wm.text = "ΑΠΟΡΡΗΤΟ".into();
         assert_eq!(undrawable(MarkKind::Watermark, &d), Some('Α'));
+        if pdfcraft_fonts::document_thai_font().is_some() {
+            d.hf.text[0] = "ภาษาไทย".into();
+            assert_eq!(undrawable(MarkKind::HeaderFooter, &d), None);
+            d.wm.text = "ใช้สำหรับต่ออายุใบอนุญาตกับ สพค.6 เท่านั้น".into();
+            assert_eq!(undrawable(MarkKind::Watermark, &d), None);
+        }
         d.use_file = true;
         assert_eq!(undrawable(MarkKind::Watermark, &d), None, "a picture watermark draws no text");
         assert_eq!(undrawable(MarkKind::Background, &d), None);

@@ -10,9 +10,96 @@
 //! Helvetica font with WinAnsi encoding; line breaking uses [`text_width`], an approximation of
 //! Helvetica's proportions by character class (no font program or metrics file is bundled).
 
-use pdfcraft_cos::{Dict, Object, PdfString, Stream};
-use pdfcraft_fonts::{first_undrawable, literal, win_ansi};
-pub use pdfcraft_fonts::{helvetica_width as text_width, wrap};
+use pdfcraft_cos::{Dict, Document, ObjRef, Object, PdfString, Stream};
+use pdfcraft_fonts::{first_undrawable, is_thai, literal, win_ansi};
+
+/// Advance of `s` in Helvetica at `size` points, or shaped Thai clusters if `s` contains Thai.
+pub fn text_width(s: &str, size: f64) -> f64 {
+    if s.chars().any(is_thai)
+        && let Ok(clusters) = pdfcraft_fonts::shape_thai(s)
+    {
+        return clusters.iter().map(|c| c.advance * size).sum();
+    }
+    pdfcraft_fonts::helvetica_width(s, size)
+}
+
+fn wrap_thai_paragraph(para: &str, size: f64, width: f64) -> Vec<String> {
+    let mut lines = Vec::new();
+    let (mut line, mut line_w) = (String::new(), 0.0);
+    let space_w = text_width(" ", size);
+
+    for word in para.split(' ') {
+        let word_w = text_width(word, size);
+        if line.is_empty() {
+            if word_w <= width {
+                line = word.to_string();
+                line_w = word_w;
+            } else {
+                if let Ok(clusters) = pdfcraft_fonts::shape_thai(word) {
+                    for c in clusters {
+                        let adv = c.advance * size;
+                        if !line.is_empty() && line_w + adv > width {
+                            lines.push(std::mem::take(&mut line));
+                            line_w = 0.0;
+                        }
+                        line.push_str(&c.text);
+                        line_w += adv;
+                    }
+                } else {
+                    line = word.to_string();
+                    line_w = word_w;
+                }
+            }
+        } else {
+            if line_w + space_w + word_w <= width {
+                line.push(' ');
+                line.push_str(word);
+                line_w += space_w + word_w;
+            } else {
+                lines.push(std::mem::take(&mut line));
+                line_w = 0.0;
+                if word_w <= width {
+                    line = word.to_string();
+                    line_w = word_w;
+                } else {
+                    if let Ok(clusters) = pdfcraft_fonts::shape_thai(word) {
+                        for c in clusters {
+                            let adv = c.advance * size;
+                            if !line.is_empty() && line_w + adv > width {
+                                lines.push(std::mem::take(&mut line));
+                                line_w = 0.0;
+                            }
+                            line.push_str(&c.text);
+                            line_w += adv;
+                        }
+                    } else {
+                        line = word.to_string();
+                        line_w = word_w;
+                    }
+                }
+            }
+        }
+    }
+    if !line.is_empty() {
+        lines.push(line);
+    }
+    lines
+}
+
+pub fn wrap(text: &str, size: f64, width: f64) -> Vec<String> {
+    if !text.chars().any(is_thai) {
+        return pdfcraft_fonts::wrap(text, size, width);
+    }
+    let mut lines = Vec::new();
+    for para in text.split(['\n', '\r']) {
+        if para.chars().any(is_thai) {
+            lines.extend(wrap_thai_paragraph(para, size, width));
+        } else {
+            lines.extend(pdfcraft_fonts::wrap(para, size, width));
+        }
+    }
+    lines
+}
 
 use crate::{NOTE_SIZE, Rgb, n};
 
@@ -322,18 +409,50 @@ fn text_turn(d: &Dict) -> i64 {
 /// text of a text box, callout or Fill & Sign text, a line's caption, a measurement's label, a
 /// dynamic stamp's "By …" line, and a redaction mark's overlay text (drawn when it is applied). `None` when all of
 /// it can be drawn.
+fn first_undrawable_freetext(text: &str) -> Option<char> {
+    let has_thai_font = pdfcraft_fonts::document_thai_font().is_some();
+    text.chars().find(|&c| {
+        if matches!(c, '\n' | '\r' | '\t') {
+            false
+        } else if is_thai(c) {
+            !has_thai_font || !pdfcraft_fonts::thai_has(c)
+        } else {
+            !pdfcraft_fonts::win_ansi_encodable(c)
+        }
+    })
+}
+
+/// The first text [`build`] would draw in the standard fonts (Helvetica, WinAnsiEncoding) that
+/// they can't, which would come out as `?`: what it is (for the message) and the character. The
+/// text of a text box, callout or Fill & Sign text, a measurement's label, a dynamic stamp's
+/// "By …" line, and a redaction mark's overlay text (drawn when it is applied). `None` when all of
+/// it can be drawn.
 pub fn undrawable_text(d: &Dict) -> Option<(&'static str, char)> {
     let text = |key: &[u8]| d.get(key).and_then(Object::as_string).map(PdfString::to_text);
-    let (what, text) = match d.name(b"Subtype")? {
-        b"FreeText" => ("the comment's text", text(b"Contents")?),
-        b"Line" if !d.contains(b"PCMeasureValue") => ("the line's caption", line_caption(d)?),
-        b"Line" | b"PolyLine" | b"Polygon" => ("the measurement label", text(b"PCMeasureValue")?),
-        b"Stamp" if matches!(d.get(b"PCStamp"), Some(Object::Bool(true))) => ("the stamp's \"By\" line", text(b"PCByLine")?),
+    match d.name(b"Subtype")? {
+        b"FreeText" => {
+            let t = text(b"Contents")?;
+            first_undrawable_freetext(&t).map(|c| ("the comment's text", c))
+        }
+        b"Line" if !d.contains(b"PCMeasureValue") => {
+            let t = line_caption(d)?;
+            first_undrawable(&t).map(|c| ("the line's caption", c))
+        }
+        b"Line" | b"PolyLine" | b"Polygon" => {
+            let t = text(b"PCMeasureValue")?;
+            first_undrawable(&t).map(|c| ("the measurement label", c))
+        }
+        b"Stamp" if matches!(d.get(b"PCStamp"), Some(Object::Bool(true))) => {
+            let t = text(b"PCByLine")?;
+            first_undrawable(&t).map(|c| ("the stamp's \"By\" line", c))
+        }
         // Drawn in Helvetica when the redaction is applied: refused when it is marked.
-        b"Redact" => ("the redaction's overlay text", text(b"OverlayText")?),
-        _ => return None,
-    };
-    Some((what, first_undrawable(&text)?))
+        b"Redact" => {
+            let t = text(b"OverlayText")?;
+            first_undrawable(&t).map(|c| ("the redaction's overlay text", c))
+        }
+        _ => None,
+    }
 }
 
 /// `/Font` resources naming `/Helv`: standard Helvetica with WinAnsiEncoding.
@@ -422,13 +541,19 @@ impl AppearanceDrawing {
 /// Text the standard fonts can't draw comes out as `?`: [`undrawable_text`] says which, and
 /// [`crate::set_appearance`] marks the annotation with it (`pdfcraft_fonts::UNDRAWN_MARK`).
 pub fn build(d: &Dict) -> Option<Stream> {
+    build_with_doc(None, d)
+}
+
+/// [`build`], optionally taking a mutable reference to `Document` to embed Type 3 fonts for
+/// shaped scripts (such as Thai).
+pub fn build_with_doc(doc: Option<&mut Document>, d: &Dict) -> Option<Stream> {
     let context = appearance_context(d)?;
     let drawing = AppearanceDrawing::new(&context);
     match context.subtype {
         b"Text" => return draw_icon(&context, "Note", [1.0, 0.82, 0.0], drawing),
         b"FileAttachment" => return draw_icon(&context, "PushPin", [0.0, 0.47, 0.84], drawing),
         b"Stamp" => return draw_stamp(&context, drawing),
-        b"FreeText" => return draw_free_text(&context, drawing),
+        b"FreeText" => return draw_free_text(doc, &context, drawing),
         _ => {}
     }
     let mut drawing = drawing;
@@ -902,7 +1027,7 @@ fn draw_stamp(context: &AppearanceContext<'_>, mut drawing: AppearanceDrawing) -
     Some(form(rect, c.as_bytes(), res))
 }
 
-fn draw_free_text(context: &AppearanceContext<'_>, mut drawing: AppearanceDrawing) -> Option<Stream> {
+fn draw_free_text(doc: Option<&mut Document>, context: &AppearanceContext<'_>, mut drawing: AppearanceDrawing) -> Option<Stream> {
     let d = context.dict;
     let rect = context.rect;
     let stroke = context.stroke;
@@ -977,18 +1102,25 @@ fn draw_free_text(context: &AppearanceContext<'_>, mut drawing: AppearanceDrawin
     let pad = 2.0 + bw;
     let width = (rect[2] - rect[0] - 2.0 * pad).max(1.0);
     let q = d.int(b"Q").unwrap_or(0);
-    c.push_str(&format!(
-        "{} {} {} {} re W n\nBT\n/Helv {} Tf\n{}",
-        n(rect[0]),
-        n(rect[1]),
-        n(rect[2] - rect[0]),
-        n(rect[3] - rect[1]),
-        n(size),
-        rg(text_color)
-    ));
+    let lines = wrap(&text, size, width);
+    let has_thai = text.chars().any(is_thai);
+    let custom_font = d.get(b"PCFont").and_then(Object::as_string).map(PdfString::to_text);
+    let (font_alias, base_font) = match custom_font.as_deref() {
+        Some("Times") => ("Times", "Times-Roman"),
+        Some("Courier") => ("Cour", "Courier"),
+        _ => ("Helv", "Helvetica"),
+    };
+    let (t3_fonts, cluster_font_map) =
+        if has_thai { prepare_thai_free_text_fonts(doc, &lines)? } else { (Vec::new(), std::collections::HashMap::new()) };
+    if bw > 0.0 || bg.is_some() {
+        c.push_str(&format!("{} {} {} {} re W n\n", n(rect[0]), n(rect[1]), n(rect[2] - rect[0]), n(rect[3] - rect[1])));
+    }
+    c.push_str(&format!("BT\n{}", rg(text_color)));
     let mut out = c.into_bytes();
-    let mut y = rect[3] - pad - size * 0.9;
-    for line in wrap(&text, size, width) {
+    let top_margin = if has_thai { size * 1.35 + pad } else { size * 0.9 + pad };
+    let line_step = if has_thai { size * 1.25 } else { size * 1.2 };
+    let mut y = rect[3] - top_margin;
+    for line in lines {
         if y < rect[1] - size {
             break;
         }
@@ -998,18 +1130,97 @@ fn draw_free_text(context: &AppearanceContext<'_>, mut drawing: AppearanceDrawin
             2 => rect[2] - pad - lw,
             _ => rect[0] + pad,
         };
-        out.extend(format!("1 0 0 1 {} {} Tm ", n(x), n(y)).bytes());
-        out.extend(literal(&win_ansi(&line)));
-        out.extend_from_slice(b" Tj\n");
-        y -= size * 1.2;
+        if !t3_fonts.is_empty()
+            && line.chars().any(is_thai)
+            && let Ok(clusters) = pdfcraft_fonts::shape_thai(&line)
+        {
+            draw_thai_free_text_line(&mut out, x, y, size, &clusters, &t3_fonts, &cluster_font_map);
+        } else {
+            out.extend(format!("1 0 0 1 {} {} Tm /{} {} Tf ", n(x), n(y), font_alias, n(size)).bytes());
+            out.extend(literal(&win_ansi(&line)));
+            out.extend_from_slice(b" Tj\n");
+        }
+        y -= line_step;
     }
     out.extend_from_slice(b"ET\n");
-    res.set(b"Font".to_vec(), helvetica_resource());
+    let mut fonts = Dict::new();
+    let mut base = Dict::new();
+    base.set(b"Type".to_vec(), Object::name("Font"));
+    base.set(b"Subtype".to_vec(), Object::name("Type1"));
+    base.set(b"BaseFont".to_vec(), Object::name(base_font));
+    base.set(b"Encoding".to_vec(), Object::name("WinAnsiEncoding"));
+    fonts.set(font_alias.as_bytes().to_vec(), Object::Dict(base));
+    for (t3_ref, font_name) in &t3_fonts {
+        fonts.set(font_name.as_bytes().to_vec(), Object::Ref(*t3_ref));
+    }
+    res.set(b"Font".to_vec(), Object::Dict(fonts));
     let mut stream = form(full, &out, res);
     if let Some(m) = matrix {
         stream.dict.set(b"Matrix".to_vec(), Object::Array(m.iter().copied().map(Object::Real).collect()));
     }
     Some(stream)
+}
+
+type OwnedClusterKey = (pdfcraft_fonts::ShapedScript, String, Vec<(u32, u64, u64)>, u64);
+type ClusterFontMap = std::collections::HashMap<OwnedClusterKey, (usize, usize)>;
+
+fn owned_cluster_key(c: &pdfcraft_fonts::ShapedCluster) -> OwnedClusterKey {
+    (c.script, c.text.clone(), c.glyphs.iter().map(|(id, [x, y])| (*id, x.to_bits(), y.to_bits())).collect(), c.advance.to_bits())
+}
+
+fn prepare_thai_free_text_fonts(doc: Option<&mut Document>, lines: &[String]) -> Option<(Vec<(ObjRef, String)>, ClusterFontMap)> {
+    let doc = doc?;
+    let mut unique_clusters = Vec::new();
+    let mut seen_keys = std::collections::HashSet::new();
+    for line in lines {
+        if line.chars().any(is_thai)
+            && let Ok(clusters) = pdfcraft_fonts::shape_thai(line)
+        {
+            for c in clusters {
+                let key = owned_cluster_key(&c);
+                if seen_keys.insert(key.clone()) {
+                    unique_clusters.push((key, c));
+                }
+            }
+        }
+    }
+    let mut t3_fonts = Vec::new();
+    let mut cluster_font_map = std::collections::HashMap::new();
+    for (chunk_idx, chunk) in unique_clusters.chunks(240).enumerate() {
+        let chunk_refs: Vec<&pdfcraft_fonts::ShapedCluster> = chunk.iter().map(|(_, c)| c).collect();
+        let t3 = pdfcraft_fonts::type3_for_clusters(doc, &chunk_refs).ok()?;
+        let font_name = if chunk_idx == 0 { "T3Thai".to_string() } else { format!("T3Thai{chunk_idx}") };
+        t3_fonts.push((t3, font_name));
+        for (local_idx, (key, _)) in chunk.iter().enumerate() {
+            cluster_font_map.insert(key.clone(), (chunk_idx, local_idx));
+        }
+    }
+    Some((t3_fonts, cluster_font_map))
+}
+
+fn draw_thai_free_text_line(
+    out: &mut Vec<u8>,
+    x: f64,
+    y: f64,
+    size: f64,
+    clusters: &[pdfcraft_fonts::ShapedCluster],
+    t3_fonts: &[(ObjRef, String)],
+    cluster_font_map: &ClusterFontMap,
+) {
+    out.extend(format!("1 0 0 1 {} {} Tm ", n(x), n(y)).bytes());
+    let mut current_font_idx: Option<usize> = None;
+    for c in clusters {
+        let key = owned_cluster_key(c);
+        if let Some(&(chunk_idx, local_idx)) = cluster_font_map.get(&key) {
+            if current_font_idx != Some(chunk_idx) {
+                let font_res = &t3_fonts[chunk_idx].1;
+                out.extend(format!("/{} {} Tf ", font_res, n(size)).bytes());
+                current_font_idx = Some(chunk_idx);
+            }
+            out.extend(format!("<{:02X}> Tj ", local_idx + 1).bytes());
+        }
+    }
+    out.extend_from_slice(b"\n");
 }
 
 fn draw_icon(context: &AppearanceContext<'_>, name: &str, fallback: Rgb, mut drawing: AppearanceDrawing) -> Option<Stream> {

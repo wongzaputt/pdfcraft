@@ -269,6 +269,12 @@ pub enum Edit {
         index: usize,
         size: f64,
     },
+    /// Change the font of a text box, typewriter text or callout.
+    FontAnnotation {
+        page: usize,
+        index: usize,
+        font: String,
+    },
     /// Comment properties ▸ General / note icon.
     SetAnnotationInfo {
         page: usize,

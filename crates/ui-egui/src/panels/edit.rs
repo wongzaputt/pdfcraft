@@ -302,6 +302,12 @@ fn format_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
                 ed.choose_family(family);
                 changed = true;
             }
+            #[cfg(not(target_arch = "wasm32"))]
+            Some(FontChoice::Thai(entry)) => {
+                app.use_paths(crate::files::FilePurpose::TextFont { page: ed.page }, &[entry.path]);
+            }
+            #[cfg(target_arch = "wasm32")]
+            Some(FontChoice::Thai(_)) => {}
             Some(FontChoice::Load) => app.pick_files(crate::files::FilePurpose::TextFont { page: ed.page }, false),
             #[cfg(not(target_arch = "wasm32"))]
             Some(FontChoice::Installed(path)) => app.use_paths(crate::files::FilePurpose::TextFont { page: ed.page }, &[path]),
@@ -323,14 +329,15 @@ fn format_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
         }
         let mut style = draft.style.clone();
         let paragraphs = crate::format_text_ui::Paragraphs { text: &draft.text, selection: draft.selection.clone(), tidy: true };
-        let out = added_text_format(ui, t, &mut style, Some(paragraphs));
+        let item_key = draft.index.map(|idx| (draft.page, idx));
+        let (out, font_changed) = added_text_format(ui, t, &mut style, item_key, Some(paragraphs));
         if let Some(script) = out.script {
             let mut toggled = draft.clone();
             if crate::edit_text_ui::toggle_script(&mut toggled.text, &mut toggled.selection, script) {
                 app.views[i].content.draft = Some(toggled);
             }
         }
-        if style != draft.style {
+        if style != draft.style || font_changed {
             app.restyle_draft(i, style);
         }
         return;
@@ -367,8 +374,8 @@ fn format_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
     match selected {
         Some((page, index, text)) => {
             let mut style = text.clone();
-            added_text_format(ui, t, &mut style, None);
-            if style != text {
+            let (_, font_changed) = added_text_format(ui, t, &mut style, Some((page, index)), None);
+            if style != text || font_changed {
                 // The reusable style follows the selection only when the edit took, so a refused one adds nothing odd later.
                 if app.apply_edit(pdfcraft_engine::Edit::UpdateContent { page, index, content: pdfcraft_engine::AddedContent::Text(style.clone()) }) {
                     app.text_style = pdfcraft_engine::AddedText { text: String::new(), rect: [0.0; 4], aligns: Vec::new(), ..style };
@@ -378,7 +385,7 @@ fn format_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
         None if app.quick_tool == crate::QuickTool::AddText => {
             crate::content_ui::hint(ui, t);
             let mut style = app.text_style.clone();
-            added_text_format(ui, t, &mut style, None);
+            added_text_format(ui, t, &mut style, None, None);
             app.text_style = style;
         }
         None => {}
@@ -391,14 +398,48 @@ fn added_text_format(
     ui: &mut egui::Ui,
     t: &Tokens,
     style: &mut pdfcraft_engine::AddedText,
+    item_key: Option<(usize, usize)>,
     paragraphs: Option<crate::format_text_ui::Paragraphs>,
-) -> crate::format_text_ui::Outcome {
-    let shown = style.family.label().to_string();
+) -> (crate::format_text_ui::Outcome, bool) {
+    let font_choice_id = match item_key {
+        Some((page, index)) => egui::Id::unique(("added_text_format_font_choice", page, index)),
+        None => egui::Id::unique("added_text_format_font_choice_new"),
+    };
+    let chosen: Option<(String, pdfcraft_engine::FontFamily)> = ui.data(|d| d.get_temp(font_choice_id));
+    let shown = chosen.filter(|(_, family)| *family == style.family).map(|(label, _)| label).unwrap_or_else(|| style.family.label().to_string());
+    let mut font_changed = false;
+
     let out = crate::format_text_ui::panel(ui, t, style, None, crate::format_text_ui::Fonts { sources: None, shown, mixed_size: false }, paragraphs);
-    if let Some(crate::format_text_ui::FontChoice::Family(family)) = out.font {
-        style.family = family;
+    match &out.font {
+        Some(crate::format_text_ui::FontChoice::Family(family)) => {
+            style.family = *family;
+            ui.data_mut(|d| d.insert_temp(font_choice_id, (family.label().to_string(), *family)));
+            font_changed = true;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        Some(crate::format_text_ui::FontChoice::Thai(entry)) if pdfcraft_fonts::set_active_thai_font_by_path(&entry.path).is_ok() => {
+            let cjk = crate::theme::CjkPreference::for_language(crate::i18n::current().code());
+            ui.ctx().set_fonts(crate::theme::installed_font_definitions(cjk));
+            if entry.family.eq_ignore_ascii_case("Courier MonoThai") {
+                style.family = pdfcraft_engine::FontFamily::Courier;
+            } else {
+                style.family = pdfcraft_engine::FontFamily::Helvetica;
+            }
+            ui.data_mut(|d| d.insert_temp(font_choice_id, (entry.name.clone(), style.family)));
+            font_changed = true;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        Some(crate::format_text_ui::FontChoice::Installed(path)) if pdfcraft_fonts::set_active_thai_font_by_path(path).is_ok() => {
+            let cjk = crate::theme::CjkPreference::for_language(crate::i18n::current().code());
+            ui.ctx().set_fonts(crate::theme::installed_font_definitions(cjk));
+            if let Some(entry) = pdfcraft_fonts::active_thai_font_entry() {
+                ui.data_mut(|d| d.insert_temp(font_choice_id, (entry.name.clone(), style.family)));
+            }
+            font_changed = true;
+        }
+        _ => {}
     }
-    out
+    (out, font_changed)
 }
 
 impl PdfCraftApp {
