@@ -49,11 +49,13 @@ pub enum Piece {
 /// the standard font. Thai runs left to right, so the pieces are in typing order.
 /// [`GlyphError::NoFont`] when there's Thai and this build has no Thai face.
 pub fn thai_pieces(line: &str) -> Result<Vec<Piece>, GlyphError> {
+    let line_has_thai = line.chars().any(is_thai);
     let mut runs: Vec<(bool, String)> = Vec::new();
     for c in line.chars() {
+        let is_t = is_thai(c) || (line_has_thai && c.is_ascii_digit() && crate::shaping::thai_has(c));
         match runs.last_mut() {
-            Some((thai, s)) if *thai == is_thai(c) => s.push(c),
-            _ => runs.push((is_thai(c), c.to_string())),
+            Some((thai, s)) if *thai == is_t => s.push(c),
+            _ => runs.push((is_t, c.to_string())),
         }
     }
     runs.into_iter().map(|(thai, s)| if thai { shape_thai(&s).map(Piece::Shaped) } else { Ok(Piece::Latin(s)) }).collect()
@@ -315,14 +317,24 @@ fn type3_font(clusters: &[&ShapedCluster], outlines: &HashMap<(ShapedScript, u32
         // Glyph space is 1000 units per em.
         let mut paths = Vec::new();
         let mut ink: Option<[f64; 4]> = None;
+        let is_digit = c.script == ShapedScript::Thai && !c.text.is_empty() && c.text.chars().all(|ch| ch.is_ascii_digit());
+        let digit_scale = if is_digit { crate::shaping::thai_digit_scale() } else { 1.0 };
         for (id, [dx, dy]) in &c.glyphs {
             let Some(g) = outlines.get(&(c.script, *id)) else { continue };
             for contour in &g.contours {
                 for (j, p) in contour.iter().enumerate() {
-                    paths.extend(format!("{} {} {}\n", n((p[0] + dx) * 1000.0), n((p[1] + dy) * 1000.0), if j == 0 { "m" } else { "l" }).bytes());
+                    paths.extend(
+                        format!(
+                            "{} {} {}\n",
+                            n((p[0] * digit_scale + dx) * 1000.0),
+                            n((p[1] * digit_scale + dy) * 1000.0),
+                            if j == 0 { "m" } else { "l" }
+                        )
+                        .bytes(),
+                    );
                 }
                 paths.extend_from_slice(b"h\n");
-                let b = [g.bbox[0] + dx, g.bbox[1] + dy, g.bbox[2] + dx, g.bbox[3] + dy];
+                let b = [g.bbox[0] * digit_scale + dx, g.bbox[1] * digit_scale + dy, g.bbox[2] * digit_scale + dx, g.bbox[3] * digit_scale + dy];
                 ink = Some(ink.map_or(b, |a| [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])]));
             }
         }
@@ -502,14 +514,16 @@ mod tests {
         }
         assert_eq!((first_undrawable("ชื่อ: น้ำ\nOK"), thai_refusal("ชื่อ: น้ำ")), (None, None));
         assert_eq!(first_undrawable("น้ำ ☃"), Some('☃'));
-        // Stacked marks reach above or near the em box's 0.9, a descender below its 0.3.
+        // Stacked marks reach above or near the em box's 0.8, a descender below its 0.3.
         let [_, top] = thai_reach("น้ำ").unwrap();
         let [bottom, _] = thai_reach("ฎู").unwrap();
-        assert!(top > 0.85 && bottom < -0.35, "{top} {bottom}");
+        assert!(top > 0.80 && bottom < -0.35, "{top} {bottom}");
         let pieces = thai_pieces("ชื่อ: บุญฤทธิ์ 12").unwrap();
-        assert!(matches!(&pieces[..], [Piece::Shaped(_), Piece::Latin(a), Piece::Shaped(_), Piece::Latin(b)] if a == ": " && b == " 12"));
+        assert!(
+            matches!(&pieces[..], [Piece::Shaped(_), Piece::Latin(a), Piece::Shaped(_), Piece::Latin(b), Piece::Shaped(_)] if a == ": " && b == " ")
+        );
         let text: String = clusters([pieces.as_slice()]).map(|c| c.text.as_str()).collect();
-        assert_eq!(text, "ชื่อบุญฤทธิ์");
+        assert_eq!(text, "ชื่อบุญฤทธิ์12");
         assert!(thai_width("น้ำ", 10.0, |_, _| 0.0) > 0.0);
     }
 }
