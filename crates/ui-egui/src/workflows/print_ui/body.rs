@@ -562,29 +562,24 @@ pub(crate) fn body(
                 ],
                 220.0,
             );
-            // Advanced (Acrobat's Advanced Print Setup): print as image. Folded unless it is on.
+            // Print as image option directly on the main print dialog.
             ui.add_space(6.0);
-            egui::CollapsingHeader::new(egui::RichText::new(crate::i18n::upper_label("Advanced")).font(theme::semibold(10.5)).color(t.text_faint))
-                .id_salt("print-advanced")
-                .default_open(d.as_image)
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.add(widgets::checkbox(&mut d.as_image, tl!("Print as image")));
-                        ui.add_enabled_ui(d.as_image, |ui| {
-                            ui.label(tl!("Resolution:"));
-                            let mut dpi = d.dpi.round() as u32;
-                            combo(ui, "print-dpi", tl!("Resolution:"), &mut dpi, &[(150, "150 dpi"), (300, "300 dpi"), (600, "600 dpi")], 100.0);
-                            d.dpi = f64::from(dpi);
-                        });
-                    });
-                    ui.label(
-                        egui::RichText::new(tl!(
-                            "Use it when a printer skips text, shading or transparency. The print is no longer searchable text; with Print in grayscale, the pictures are grey."
-                        ))
-                        .small()
-                        .color(t.text_muted),
-                    );
+            ui.horizontal(|ui| {
+                ui.add(widgets::checkbox(&mut d.as_image, tl!("Print as image")));
+                ui.add_enabled_ui(d.as_image, |ui| {
+                    ui.label(tl!("Resolution:"));
+                    let mut dpi = d.dpi.round() as u32;
+                    combo(ui, "print-dpi", tl!("Resolution:"), &mut dpi, &[(150, "150 dpi"), (300, "300 dpi"), (600, "600 dpi")], 100.0);
+                    d.dpi = f64::from(dpi);
                 });
+            });
+            ui.label(
+                egui::RichText::new(tl!(
+                    "Use it when a printer skips text, shading or transparency. The print is no longer searchable text; with Print in grayscale, the pictures are grey."
+                ))
+                .small()
+                .color(t.text_muted),
+            );
         });
         ui.add_space(12.0);
         // Preview.
