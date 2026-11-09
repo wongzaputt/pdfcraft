@@ -18,10 +18,15 @@ mod script;
 pub mod shaped_text;
 mod shaping;
 pub mod source_shaping;
+#[cfg(not(target_arch = "wasm32"))]
+pub use craft::load_custom_thai_font_file;
 pub use craft::{
-    CRAFT_FONTS, CraftFont, SHIPPORI_MINCHO, document_arabic_font, document_devanagari_font, document_hebrew_font, document_japanese_font,
-    document_japanese_font_for_style, document_japanese_fonts_for_style, document_latin_fonts, document_thai_font, ui_arabic_fonts, ui_chinese_fonts,
-    ui_cjk_fonts, ui_devanagari_fonts, ui_hebrew_fonts, ui_japanese_fonts, ui_telugu_fonts, ui_thai_fonts,
+    CRAFT_FONTS, CraftFont, SHIPPORI_MINCHO, ThaiFontEntry, active_thai_font, active_thai_font_entry, available_thai_fonts,
+    bundled_tlwg_typewriter_font, clear_active_thai_font, document_arabic_font, document_devanagari_font, document_hebrew_font,
+    document_japanese_font, document_japanese_font_for_style, document_japanese_fonts_for_style, document_latin_fonts, document_thai_font,
+    font_directories, load_custom_thai_font, load_custom_thai_font_named, register_custom_thai_font, rescan_thai_fonts, set_active_thai_font_by_name,
+    set_active_thai_font_by_path, set_active_thai_font_entry, ui_arabic_fonts, ui_chinese_fonts, ui_cjk_fonts, ui_devanagari_fonts, ui_hebrew_fonts,
+    ui_japanese_fonts, ui_telugu_fonts, ui_thai_fonts,
 };
 pub use craft_pdf::fonts::{
     Std14, Std14Match, UnicodeCMap, encodings, first_non_win_ansi, fits_win_ansi, win_ansi, win_ansi_byte, win_ansi_char, win_ansi_encodable,
@@ -33,7 +38,7 @@ pub use script::{
 };
 pub use shaping::{
     ShapedCluster, ShapedScript, arabic_glyph, arabic_has, face_glyph, hebrew_has, latin_has, shape_arabic, shape_hebrew, shape_latin, shape_thai,
-    shaped_glyph, thai_has,
+    shaped_glyph, thai_digit_scale, thai_has,
 };
 
 /// Advance of `s` in Helvetica at `size` points, using the exact standard-14 metrics.
