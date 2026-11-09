@@ -35,8 +35,7 @@ pub(crate) fn font_combo_box(
     combo.show_ui(ui, |ui| {
         // 1. Standard fonts
         for std_name in ["Helvetica", "Times", "Courier"] {
-            let selected = current_label.eq_ignore_ascii_case(std_name)
-                || (std_name == "Times" && current_label.eq_ignore_ascii_case("Times Roman"));
+            let selected = current_label.eq_ignore_ascii_case(std_name) || (std_name == "Times" && current_label.eq_ignore_ascii_case("Times Roman"));
             let display_name = if std_name == "Times" { "Times Roman" } else { std_name };
             if ui.selectable_label(selected, display_name).clicked() {
                 chosen = Some(FontSelection::Standard(std_name));
@@ -49,11 +48,7 @@ pub(crate) fn font_combo_box(
             let thai_fonts = pdfcraft_fonts::available_thai_fonts();
             if !thai_fonts.is_empty() {
                 ui.separator();
-                ui.label(
-                    egui::RichText::new(tl!("Thai / System fonts"))
-                        .small()
-                        .color(ui.visuals().text_color().gamma_multiply(0.6)),
-                );
+                ui.label(egui::RichText::new(tl!("Thai / System fonts")).small().color(ui.visuals().text_color().gamma_multiply(0.6)));
                 for entry in &thai_fonts {
                     let selected = current_label == entry.name || current_label == entry.family;
                     if ui.selectable_label(selected, &entry.name).clicked() {
@@ -80,11 +75,8 @@ pub(crate) fn font_combo_box(
                         ui.horizontal(|ui| {
                             let (icon_rect, _) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
                             crate::icons::paint(ui, icon_rect, "search", 13.0, ui.visuals().text_color().gamma_multiply(0.6));
-                            let resp = ui.add(
-                                egui::TextEdit::singleline(&mut query)
-                                    .hint_text(tl!("Search…"))
-                                    .desired_width(ui.available_width() - 8.0),
-                            );
+                            let resp =
+                                ui.add(egui::TextEdit::singleline(&mut query).hint_text(tl!("Search…")).desired_width(ui.available_width() - 8.0));
                             if resp.changed() {
                                 ui.data_mut(|d| d.insert_temp(search_id, query.clone()));
                             }
@@ -110,11 +102,7 @@ pub(crate) fn font_combo_box(
                                 for (family, faces) in families {
                                     if faces.len() == 1 {
                                         if let Some(&font) = faces.first() {
-                                            let label = if font.face != font.family && !font.face.is_empty() {
-                                                font.face.as_str()
-                                            } else {
-                                                family
-                                            };
+                                            let label = if font.face != font.family && !font.face.is_empty() { font.face.as_str() } else { family };
                                             if ui.button(label).clicked() {
                                                 chosen = Some(FontSelection::Installed(font.path.clone()));
                                                 ui.close();
@@ -150,14 +138,14 @@ pub(crate) fn font_combo_box(
     });
 
     if let Some(ref sel) = chosen {
-        apply_font_selection(ui, sel);
+        apply_font_selection(sel);
     }
 
     chosen
 }
 
-/// Activate font selection and update egui font definitions
-fn apply_font_selection(ui: &mut Ui, sel: &FontSelection) {
+/// Activate font selection
+fn apply_font_selection(sel: &FontSelection) {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let path_opt: Option<&std::path::Path> = match sel {
@@ -166,11 +154,8 @@ fn apply_font_selection(ui: &mut Ui, sel: &FontSelection) {
             FontSelection::Standard(_) => None,
         };
 
-        if let Some(path) = path_opt
-            && pdfcraft_fonts::set_active_thai_font_by_path(path).is_ok()
-        {
-            let cjk = crate::theme::CjkPreference::for_language(crate::i18n::current().code());
-            ui.ctx().set_fonts(crate::theme::installed_font_definitions(cjk));
+        if let Some(path) = path_opt {
+            let _ = pdfcraft_fonts::set_active_thai_font_by_path(path);
         }
     }
 }
