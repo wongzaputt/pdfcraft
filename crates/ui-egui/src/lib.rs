@@ -65,11 +65,11 @@ pub use print_ui::{
     TwoSidedSource, Which as PrintWhich, system_printers, system_two_sided,
 };
 pub use redact_ui::{HiddenDraft, PagesDraft as RedactPagesDraft, RedactPrefs, SearchDraft as RedactSearchDraft, SearchMode as RedactSearchMode};
+pub(crate) mod font_combo;
 pub mod i18n;
 pub mod theme;
 pub mod viewer_prefs;
 mod widgets;
-pub(crate) mod font_combo;
 
 use pdfcraft_engine::{DocId, Session};
 

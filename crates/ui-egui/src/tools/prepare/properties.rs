@@ -87,9 +87,7 @@ pub(crate) fn body(ui: &mut egui::Ui, d: &mut FieldDraft, t: &crate::theme::Toke
                     ui.end_row();
                     if let Some(l) = d.look.as_mut() {
                         ui.label(tl!("Font:"));
-                        let current_label = pdfcraft_fonts::active_thai_font_entry()
-                            .map(|e| e.name)
-                            .unwrap_or_else(|| l.font.label().to_string());
+                        let current_label = pdfcraft_fonts::active_thai_font_entry().map(|e| e.name).unwrap_or_else(|| l.font.label().to_string());
                         if let Some(sel) = crate::font_combo::font_combo_box(ui, "field-font", &current_label, Some(140.0)) {
                             match sel {
                                 crate::font_combo::FontSelection::Standard(name) => {

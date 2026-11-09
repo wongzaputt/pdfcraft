@@ -475,11 +475,11 @@ fn active_tool_controls(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, ve
                 app.apply_edit(Edit::StyleAnnotation { page, index, color: Some(color), opacity: None, width: None, endings: None });
             }
         }
-        let font_label = pdfcraft_fonts::active_thai_font_entry()
-            .map(|e| e.name)
-            .unwrap_or_else(|| "Helvetica".to_string());
-        if let Some(_sel) = crate::font_combo::font_combo_box(ui, "hotbar-fill-font", &font_label, Some(110.0)) {
-            // Font choice activated via font_combo_box
+        let font_label = pdfcraft_fonts::active_thai_font_entry().map(|e| e.name).unwrap_or_else(|| "Helvetica".to_string());
+        if let Some(_sel) = crate::font_combo::font_combo_box(ui, "hotbar-fill-font", &font_label, Some(110.0))
+            && let Some((page, index)) = selected_fill_text(app)
+        {
+            app.apply_edit(Edit::FontSizeAnnotation { page, index, size: app.fill_text_size });
         }
         let resp = icons::button(ui, "a-large-small", 32.0, false, tl!("Font size"));
         let resized = egui::Popup::menu(&resp)
