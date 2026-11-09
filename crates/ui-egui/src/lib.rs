@@ -65,6 +65,7 @@ pub mod i18n;
 pub mod theme;
 pub mod viewer_prefs;
 mod widgets;
+pub(crate) mod font_combo;
 
 use pdfcraft_engine::{DocId, Session};
 
