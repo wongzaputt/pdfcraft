@@ -30,6 +30,8 @@ pub(crate) enum FontChoice {
     Load,
     /// A font file installed on this computer.
     Installed(std::path::PathBuf),
+    /// A Thai / system font.
+    Thai(pdfcraft_fonts::ThaiFontEntry),
 }
 
 /// What the font list offers and shows.
@@ -166,16 +168,31 @@ pub(crate) fn panel(
                     ui.separator();
                 }
                 for f in [FontFamily::Helvetica, FontFamily::Times, FontFamily::Courier] {
-                    if ui.selectable_label(fonts.sources.is_none() && look.family == f, f.label()).clicked() {
+                    let selected = fonts.shown == f.label();
+                    if ui.selectable_label(selected, f.label()).clicked() {
                         out.font = Some(FontChoice::Family(f));
                     }
                 }
-                if fonts.sources.is_some() {
-                    ui.separator();
-                    if ui.selectable_label(false, tl!("Load font…")).clicked() {
-                        out.font = Some(FontChoice::Load);
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let thai_fonts = pdfcraft_fonts::available_thai_fonts();
+                    if !thai_fonts.is_empty() {
+                        ui.separator();
+                        ui.label(egui::RichText::new(tl!("Thai / System fonts")).small().color(t.text_muted));
+                        for entry in &thai_fonts {
+                            let selected = fonts.shown == entry.name;
+                            if ui.selectable_label(selected, &entry.name).clicked() {
+                                out.font = Some(FontChoice::Thai(entry.clone()));
+                            }
+                        }
                     }
-                    #[cfg(not(target_arch = "wasm32"))]
+                }
+                ui.separator();
+                if ui.selectable_label(false, tl!("Load font…")).clicked() {
+                    out.font = Some(FontChoice::Load);
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                {
                     ui.menu_button(tl!("Installed fonts…"), |ui| {
                         ui.set_min_width(260.0);
                         let reload = ui.button(tl!("Reload")).clicked();
@@ -250,8 +267,8 @@ pub(crate) fn panel(
                             }
                         }
                     });
-                    ui.add_space(4.0);
                 }
+                ui.add_space(4.0);
             })
             .response
     });
