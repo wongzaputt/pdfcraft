@@ -483,9 +483,7 @@ pub(crate) fn body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, kind: M
             ui.horizontal(|ui| {
                 // The faces a header can be drawn in (#3754).
                 ui.label(tl!("Font:"));
-                let current_label = pdfcraft_fonts::active_thai_font_entry()
-                    .map(|e| e.name)
-                    .unwrap_or_else(|| d.hf.font.label().to_string());
+                let current_label = pdfcraft_fonts::active_thai_font_entry().map(|e| e.name).unwrap_or_else(|| d.hf.font.label().to_string());
                 if let Some(sel) = crate::font_combo::font_combo_box(ui, "hf-font", &current_label, Some(120.0)) {
                     match sel {
                         crate::font_combo::FontSelection::Standard(name) => {
@@ -592,9 +590,7 @@ pub(crate) fn body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, kind: M
                     });
                     ui.horizontal(|ui| {
                         ui.add_enabled_ui(!d.use_file, |ui| {
-                            let current_label = pdfcraft_fonts::active_thai_font_entry()
-                                .map(|e| e.name)
-                                .unwrap_or_else(|| "Helvetica".to_string());
+                            let current_label = pdfcraft_fonts::active_thai_font_entry().map(|e| e.name).unwrap_or_else(|| "Helvetica".to_string());
                             let _ = crate::font_combo::font_combo_box(ui, "wm-font", &current_label, Some(110.0));
                             ui.add(widgets::checkbox(&mut d.fit, tl!("Fit to page")))
                         });

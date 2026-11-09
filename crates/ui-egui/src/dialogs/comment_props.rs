@@ -276,7 +276,7 @@ fn changes(o: &CommentProps, e: &CommentProps, page: usize, index: usize, t: &Co
     }
     if t.restylable
         && t.font_size.is_some()
-        && let Some(size) = e.font_size.filter(|s| Some(*s) != o.font_size)
+        && let Some(size) = e.font_size
     {
         out.push(Edit::FontSizeAnnotation { page, index, size });
     }
@@ -399,6 +399,12 @@ pub(crate) fn body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens) -> (boo
                         if let Some(f) = crate::comments::fill_picker(ui, e.fill) {
                             e.fill = f;
                         }
+                        ui.end_row();
+                    }
+                    if e.font_size.is_some() {
+                        ui.label(tl!("Font"));
+                        let current_label = pdfcraft_fonts::active_thai_font_entry().map(|e| e.name).unwrap_or_else(|| "Helvetica".to_string());
+                        let _ = crate::font_combo::font_combo_box(ui, "comment-font", &current_label, Some(140.0));
                         ui.end_row();
                     }
                     if let Some(size) = e.font_size.as_mut() {

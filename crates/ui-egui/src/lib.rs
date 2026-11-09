@@ -61,11 +61,11 @@ mod panels;
 pub mod panes;
 pub use print_ui::{Handling as PrintHandling, OptionsSource, PrintDraft, PrinterSource, Spooler, Which as PrintWhich, system_printers};
 pub use redact_ui::{HiddenDraft, PagesDraft as RedactPagesDraft, RedactPrefs, SearchDraft as RedactSearchDraft, SearchMode as RedactSearchMode};
+pub(crate) mod font_combo;
 pub mod i18n;
 pub mod theme;
 pub mod viewer_prefs;
 mod widgets;
-pub(crate) mod font_combo;
 
 use pdfcraft_engine::{DocId, Session};
 
