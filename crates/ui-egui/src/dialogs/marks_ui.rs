@@ -481,13 +481,34 @@ pub(crate) fn body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, kind: M
     match kind {
         MarkKind::HeaderFooter => {
             ui.horizontal(|ui| {
-                // The standard faces a header can be drawn in (#3754).
+                // The faces a header can be drawn in (#3754).
                 ui.label(tl!("Font:"));
-                craft_ui::ComboBox::from_id_salt("hf-font").selected_text(d.hf.font.label()).width(100.0).show_ui(ui, |ui| {
-                    for f in [FontFamily::Helvetica, FontFamily::Times, FontFamily::Courier] {
-                        ui.selectable_value(&mut d.hf.font, f, f.label());
+                let current_label = pdfcraft_fonts::active_thai_font_entry()
+                    .map(|e| e.name)
+                    .unwrap_or_else(|| d.hf.font.label().to_string());
+                if let Some(sel) = crate::font_combo::font_combo_box(ui, "hf-font", &current_label, Some(120.0)) {
+                    match sel {
+                        crate::font_combo::FontSelection::Standard(name) => {
+                            if name == "Times" {
+                                d.hf.font = FontFamily::Times;
+                            } else if name == "Courier" {
+                                d.hf.font = FontFamily::Courier;
+                            } else {
+                                d.hf.font = FontFamily::Helvetica;
+                            }
+                        }
+                        crate::font_combo::FontSelection::Thai(entry) => {
+                            if entry.family.contains("Mono") || entry.family.contains("Typewriter") {
+                                d.hf.font = FontFamily::Courier;
+                            } else {
+                                d.hf.font = FontFamily::Helvetica;
+                            }
+                        }
+                        crate::font_combo::FontSelection::Installed(_) => {
+                            d.hf.font = FontFamily::Helvetica;
+                        }
                     }
-                });
+                }
                 ui.label(tl!("Size"));
                 ui.add(egui::DragValue::new(&mut d.hf.font_size).range(4.0..=72.0).speed(0.5));
                 ui.add(widgets::checkbox(&mut d.hf.underline, tl!("Underline")));
@@ -570,7 +591,13 @@ pub(crate) fn body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, kind: M
                         );
                     });
                     ui.horizontal(|ui| {
-                        ui.add_enabled_ui(!d.use_file, |ui| ui.add(widgets::checkbox(&mut d.fit, tl!("Fit to page"))));
+                        ui.add_enabled_ui(!d.use_file, |ui| {
+                            let current_label = pdfcraft_fonts::active_thai_font_entry()
+                                .map(|e| e.name)
+                                .unwrap_or_else(|| "Helvetica".to_string());
+                            let _ = crate::font_combo::font_combo_box(ui, "wm-font", &current_label, Some(110.0));
+                            ui.add(widgets::checkbox(&mut d.fit, tl!("Fit to page")))
+                        });
                         ui.add_enabled_ui(!d.fit, |ui| {
                             ui.label(tl!("Size"));
                             if d.wm.font_size == 0.0 {
