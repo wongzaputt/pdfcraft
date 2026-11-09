@@ -305,10 +305,8 @@ impl PdfCraftApp {
         if let Some(as_image) = v["print_as_image"].as_bool() {
             self.print_draft.as_image = as_image;
         }
-        if let Some(dpi) = v["print_dpi"].as_f64() {
-            if (72.0..=1200.0).contains(&dpi) {
-                self.print_draft.dpi = dpi;
-            }
+        if let Some(dpi) = v["print_dpi"].as_f64().filter(|dpi| (72.0..=1200.0).contains(dpi)) {
+            self.print_draft.dpi = dpi;
         }
         if let Some(on) = v["highlight_fields"].as_bool() {
             self.view_defaults.highlight_fields = on;
