@@ -87,11 +87,32 @@ pub(crate) fn body(ui: &mut egui::Ui, d: &mut FieldDraft, t: &crate::theme::Toke
                     ui.end_row();
                     if let Some(l) = d.look.as_mut() {
                         ui.label(tl!("Font:"));
-                        craft_ui::ComboBox::from_id_salt("field-font").selected_text(l.font.label()).show_ui(ui, |ui| {
-                            for f in FieldFont::ALL {
-                                ui.selectable_value(&mut l.font, f, f.label());
+                        let current_label = pdfcraft_fonts::active_thai_font_entry()
+                            .map(|e| e.name)
+                            .unwrap_or_else(|| l.font.label().to_string());
+                        if let Some(sel) = crate::font_combo::font_combo_box(ui, "field-font", &current_label, Some(140.0)) {
+                            match sel {
+                                crate::font_combo::FontSelection::Standard(name) => {
+                                    if name == "Times" {
+                                        l.font = FieldFont::Times;
+                                    } else if name == "Courier" {
+                                        l.font = FieldFont::Courier;
+                                    } else {
+                                        l.font = FieldFont::Helvetica;
+                                    }
+                                }
+                                crate::font_combo::FontSelection::Thai(entry) => {
+                                    if entry.family.contains("Mono") || entry.family.contains("Typewriter") {
+                                        l.font = FieldFont::Courier;
+                                    } else {
+                                        l.font = FieldFont::Helvetica;
+                                    }
+                                }
+                                crate::font_combo::FontSelection::Installed(_) => {
+                                    l.font = FieldFont::Helvetica;
+                                }
                             }
-                        });
+                        }
                         ui.end_row();
                         ui.label(tl!("Text Color:"));
                         if let Some(c) = crate::comments::swatch_grid(ui, Some(l.text)) {
