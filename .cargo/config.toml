@@ -1,7 +1,8 @@
 [alias]
+# Direct developers towards xtask, the project's supported build tool.
 xtask = "run -p xtask --"
 
-# WebAssembly SIMD (every current browser has it; there's no runtime detection on wasm). The OCR
+# WebAssembly SIMD: matches modern browsers (Chrome 91+, Safari 16.4+, Firefox 89+). The
 # engine's kernels (rten-simd) and other vectorised code only use it when compiled in.
 [target.wasm32-unknown-unknown]
 rustflags = ["-C", "target-feature=+simd128"]
@@ -13,3 +14,5 @@ rustflags = ["-C", "target-feature=+simd128"]
 # which it can only do once `main` runs.
 [env]
 AWS_LC_SYS_CFLAGS = "-DBORINGSSL_NO_STATIC_INITIALIZER"
+# ชี้ไปยังโฟลเดอร์ที่ checkout craft-fonts ไว้ (ปรับ path ให้ตรงกับเครื่องของคุณ)
+CRAFT_FONTS_DIR = { value = "../craft-fonts", relative = true }
