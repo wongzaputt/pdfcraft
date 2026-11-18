@@ -182,7 +182,7 @@ pub fn shape_thai(text: &str) -> Result<Vec<ShapedCluster>, GlyphError> {
 
 /// Whether the bundled Inter face has a glyph for `c`.
 pub fn latin_has(c: char) -> bool {
-    face(ShapedScript::Latin).is_some_and(|(font, _)| font.charmap().map(c).is_some_and(|g| g.to_u32() != 0))
+    face(ShapedScript::Latin).is_some_and(|cached| cached.0.charmap().map(c).is_some_and(|g| g.to_u32() != 0))
 }
 
 /// Shape a left-to-right run of Latin, Greek or Cyrillic `text` with the bundled Inter face,
