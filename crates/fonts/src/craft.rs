@@ -254,8 +254,10 @@ fn scan_dir_recursive(dir: &std::path::Path, depth: usize, entries: &mut Vec<Tha
         if !ft.is_file() {
             continue;
         }
-        let is_font_ext =
-            path.extension().and_then(|e| e.to_str()).is_some_and(|ext| ext.eq_ignore_ascii_case("ttf") || ext.eq_ignore_ascii_case("otf"));
+        let is_font_ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("ttf") || ext.eq_ignore_ascii_case("otf") || ext.eq_ignore_ascii_case("ttc"));
         if !is_font_ext {
             continue;
         }
