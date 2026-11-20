@@ -138,14 +138,24 @@ pub(crate) fn font_combo_box(
     });
 
     if let Some(ref sel) = chosen {
-        apply_font_selection(sel);
+        apply_font_selection(ui, sel);
     }
 
     chosen
 }
 
+/// FontId for dialog previews: uses the dedicated `"thai-preview"` family when registered so
+/// changing the document Thai font updates the preview without changing the UI/Comments font.
+pub(crate) fn preview_font_id(ctx: &egui::Context, size: f32, monospace: bool) -> egui::FontId {
+    let preview_family = egui::FontFamily::Name("thai-preview".into());
+    if !monospace && pdfcraft_fonts::active_thai_font_entry().is_some() && ctx.fonts(|f| f.definitions().families.contains_key(&preview_family)) {
+        return egui::FontId::new(size, preview_family);
+    }
+    if monospace { egui::FontId::monospace(size) } else { egui::FontId::proportional(size) }
+}
+
 /// Activate font selection
-fn apply_font_selection(sel: &FontSelection) {
+fn apply_font_selection(ui: &mut Ui, sel: &FontSelection) {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let path_opt: Option<&std::path::Path> = match sel {
@@ -154,8 +164,20 @@ fn apply_font_selection(sel: &FontSelection) {
             FontSelection::Standard(_) => None,
         };
 
-        if let Some(path) = path_opt {
-            let _ = pdfcraft_fonts::set_active_thai_font_by_path(path);
+        if let Some(path) = path_opt
+            && pdfcraft_fonts::set_active_thai_font_by_path(path).is_ok()
+            && let Some(active) = pdfcraft_fonts::active_thai_font()
+        {
+            let cjk = crate::theme::CjkPreference::for_language(crate::i18n::current().code());
+            let mut defs = crate::theme::installed_font_definitions(cjk);
+            let mut stack = defs.families.get(&egui::FontFamily::Proportional).cloned().unwrap_or_default();
+            let preview_key = "thai-preview-active".to_owned();
+            defs.font_data.insert(preview_key.clone(), std::sync::Arc::new(egui::FontData::from_static(active.bytes)));
+            stack.insert(0, preview_key);
+            defs.families.insert(egui::FontFamily::Name("thai-preview".into()), stack);
+            ui.ctx().set_fonts(defs);
         }
     }
+    #[cfg(target_arch = "wasm32")]
+    let _ = (ui, sel);
 }
