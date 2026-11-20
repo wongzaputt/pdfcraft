@@ -63,8 +63,9 @@ pub fn fallback_pieces(line: &str, thai: bool, latin: bool) -> Result<Vec<Piece>
         Latin,
         Standard,
     }
+    let line_has_thai = thai && line.chars().any(is_thai);
     let kind = |c: char| {
-        if thai && is_thai(c) {
+        if thai && (is_thai(c) || (line_has_thai && c.is_ascii_digit() && crate::shaping::thai_has(c))) {
             Run::Thai
         } else if latin && latin_fallback(c) {
             Run::Latin
