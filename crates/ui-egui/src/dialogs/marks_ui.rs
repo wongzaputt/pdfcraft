@@ -218,6 +218,8 @@ pub struct MarksDraft {
     /// The page (0-based) the preview was stepped to; `None` previews the current page. Reset
     /// each time the dialog opens.
     pub preview: Option<usize>,
+    /// Whether the user explicitly picked a Standard font in Header & Footer.
+    pub hf_standard_font: bool,
 }
 
 impl Default for MarksDraft {
@@ -237,6 +239,7 @@ impl Default for MarksDraft {
             file_page: 1,
             backdrops: BackdropCheck::default(),
             preview: None,
+            hf_standard_font: false,
         }
     }
 }
@@ -483,10 +486,15 @@ pub(crate) fn body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, kind: M
             ui.horizontal(|ui| {
                 // The faces a header can be drawn in (#3754).
                 ui.label(tl!("Font:"));
-                let current_label = pdfcraft_fonts::active_thai_font_entry().map(|e| e.name).unwrap_or_else(|| d.hf.font.label().to_string());
+                let current_label = if d.hf_standard_font {
+                    d.hf.font.label().to_string()
+                } else {
+                    pdfcraft_fonts::active_thai_font_entry().map(|e| e.name).unwrap_or_else(|| d.hf.font.label().to_string())
+                };
                 if let Some(sel) = crate::font_combo::font_combo_box(ui, "hf-font", &current_label, Some(120.0)) {
                     match sel {
                         crate::font_combo::FontSelection::Standard(name) => {
+                            d.hf_standard_font = true;
                             if name == "Times" {
                                 d.hf.font = FontFamily::Times;
                             } else if name == "Courier" {
@@ -496,6 +504,7 @@ pub(crate) fn body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, kind: M
                             }
                         }
                         crate::font_combo::FontSelection::Thai(entry) => {
+                            d.hf_standard_font = false;
                             if entry.family.contains("Mono") || entry.family.contains("Typewriter") {
                                 d.hf.font = FontFamily::Courier;
                             } else {
@@ -503,6 +512,7 @@ pub(crate) fn body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, kind: M
                             }
                         }
                         crate::font_combo::FontSelection::Installed(_) => {
+                            d.hf_standard_font = false;
                             d.hf.font = FontFamily::Helvetica;
                         }
                     }
@@ -700,9 +710,9 @@ pub(crate) fn body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, kind: M
                         1 => (r.center().x, egui::Align2::CENTER_CENTER),
                         _ => (r.right() - hf.margins[3] as f32 * s, egui::Align2::RIGHT_CENTER),
                     };
-                    // Courier previews in the monospaced UI face, the others proportional.
+                    // Courier previews in the monospaced UI face, Thai previews in the active Thai face.
                     let size = (hf.font_size as f32 * s).max(5.0);
-                    let font = if hf.font == FontFamily::Courier { egui::FontId::monospace(size) } else { egui::FontId::proportional(size) };
+                    let font = crate::font_combo::preview_font_id(p.ctx(), size, hf.font == FontFamily::Courier);
                     p.text(pos2(x, y), align, shown, font, rgb32(hf.color));
                 }
             }
@@ -724,7 +734,11 @@ pub(crate) fn body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, kind: M
                 } else {
                     (wm.font_size as f32 * s).max(5.0)
                 };
-                let galley = p.layout_no_wrap(text.to_string(), egui::FontId::proportional(size), rgb32(wm.color).gamma_multiply(wm.opacity as f32));
+                let galley = p.layout_no_wrap(
+                    text.to_string(),
+                    crate::font_combo::preview_font_id(p.ctx(), size, false),
+                    rgb32(wm.color).gamma_multiply(wm.opacity as f32),
+                );
                 let angle = -(wm.rotation as f32).to_radians();
                 let half = galley.size() / 2.0;
                 let (sn, cs) = angle.sin_cos();
