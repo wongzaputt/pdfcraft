@@ -136,6 +136,8 @@ pub struct FieldDraft {
     /// `/MK /R`: 0, 90, 180 or 270 degrees counterclockwise.
     pub rotation: i64,
     pub look: Option<FieldLook>,
+    pub font_changed: bool,
+    pub standard_font: bool,
     /// Check boxes and radio buttons: the mark when on (Options tab).
     pub check_style: Option<pdfcraft_engine::CheckStyle>,
     pub format: Format,
@@ -210,6 +212,8 @@ impl FieldDraft {
             position: [r[0], r[1], r[2] - r[0], r[3] - r[1]],
             rotation: f.widgets.get(widget).map(|w| w.rotation).unwrap_or(0),
             look: None,
+            font_changed: false,
+            standard_font: false,
             check_style: None,
             format: f.actions.format.clone(),
             validate: f.actions.validate.clone(),
@@ -276,7 +280,7 @@ impl FieldDraft {
                 (self.widget, [x, y, x + w.max(4.0), y + h.max(4.0)])
             }),
             rotation: (self.rotation != o.rotation).then_some((self.widget, self.rotation)),
-            look: (self.look != o.look).then_some(self.look).flatten(),
+            look: (self.look != o.look || self.font_changed).then_some(self.look).flatten(),
             appearance: None,
             check_style: (self.check_style != o.check_style).then_some(self.check_style).flatten(),
             format: (self.format != o.format).then(|| self.format.clone()),
