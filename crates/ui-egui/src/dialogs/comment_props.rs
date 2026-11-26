@@ -98,8 +98,9 @@ fn opening(o: &CommentProps) -> DialogFields {
         f.set("border_shape", shape.name());
     }
     if let Some(size) = o.font_size {
-        let font_id =
-            pdfcraft_fonts::active_thai_font_entry().map(|t| format!("thai:{}", t.path.display())).unwrap_or_else(|| "helvetica".to_string());
+        let font_id = pdfcraft_fonts::active_thai_font()
+            .map(|t| format!("thai:{}", t.path.display()))
+            .unwrap_or_else(|| "helvetica".to_string());
         f.set("font", FieldValue::Text(font_id));
         f.set("font_size", FieldValue::Number(size));
     }
@@ -142,7 +143,7 @@ pub fn edited(original: &CommentProps, fields: &DialogFields) -> CommentProps {
         if let Some(font) = fields.text("font")
             && let Some(path) = font.strip_prefix("thai:")
         {
-            let _ = pdfcraft_fonts::set_active_thai_font_by_path(std::path::Path::new(path));
+            pdfcraft_fonts::set_active_thai_font_by_path(std::path::Path::new(path));
         }
         e.border_color = fields.color(BORDER).map(rgb);
         e.font_size = fields.number("font_size").or(e.font_size);

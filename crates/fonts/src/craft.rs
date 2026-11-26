@@ -371,7 +371,8 @@ pub fn load_custom_thai_font_named(bytes: Vec<u8>, family: String, style: String
     let family_str = Box::leak(family.into_boxed_str()) as &'static str;
     let style_str = Box::leak(style.into_boxed_str()) as &'static str;
     let leaked_bytes = Box::leak(bytes.into_boxed_slice());
-    let font = Box::leak(Box::new(EmbeddedFace { family: family_str, style: style_str, scripts: &["Thai"], index: 0, bytes: leaked_bytes, role: None }));
+    let font =
+        Box::leak(Box::new(EmbeddedFace { family: family_str, style: style_str, scripts: &["Thai"], index: 0, bytes: leaked_bytes, role: None }));
     Ok(font)
 }
 
