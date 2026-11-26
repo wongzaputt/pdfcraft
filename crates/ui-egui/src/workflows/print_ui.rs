@@ -1061,4 +1061,93 @@ mod tests {
         let rasters = preview_rasters(&later, &sizes, &labels, 2.0, 8192.0, PANE);
         assert!(rasters.iter().any(|(page, _)| *page == 2));
     }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn session_print_settings_are_remembered_only_after_printing() {
+        let mut app = PdfCraftApp::for_unit_tests();
+        let ctx = egui::Context::default();
+        app.set_option(&ctx, "language", "en").unwrap();
+        app.printer_source =
+            Some(Arc::new(|| vec![spool::Printer { name: "Office".into(), default: true, two_sided: Some(true), description: String::new() }]));
+        app.spooler = Some(Arc::new(|_pdf, _job| Ok(String::new())));
+        app.open_bytes(&ctx, "form.pdf", None, include_bytes!("../../tests/data/form.pdf").to_vec()).unwrap();
+
+        // 1. Open Print, change settings, then cancel without printing -> nothing is remembered.
+        app.open_print();
+        {
+            let d = &mut app.print_draft;
+            d.copies = 4;
+            d.which = Which::Range;
+            d.range = "1-2".into();
+            d.subset = Subset::Odd;
+            d.reverse = true;
+            d.handling = Handling::Booklet;
+            d.orientation = Orientation::Landscape;
+            d.grayscale = true;
+        }
+        app.dialogs.cancel::<HostedPrint>(&ctx);
+        app.poll_print();
+
+        app.open_print();
+        {
+            let d = &app.print_draft;
+            assert_eq!(d.copies, 1);
+            assert_eq!(d.which, Which::All);
+            assert_eq!(d.range, "");
+            assert_eq!(d.subset, Subset::All);
+            assert!(!d.reverse);
+            assert_eq!(d.handling, Handling::Size);
+            assert_eq!(d.orientation, Orientation::Auto);
+            assert!(!d.grayscale);
+        }
+
+        // 2. Change settings and actually print -> all settings are remembered on next open.
+        {
+            let d = &mut app.print_draft;
+            d.papers_loading = None;
+            d.copies = 3;
+            d.which = Which::Range;
+            d.range = "1".into();
+            d.subset = Subset::Odd;
+            d.reverse = true;
+            d.handling = Handling::Multiple;
+            d.per_sheet = 4;
+            d.orientation = Orientation::Portrait;
+            d.grayscale = true;
+        }
+        app.print_now(&ctx).expect("print_now should succeed");
+        app.dialogs.cancel::<HostedPrint>(&ctx);
+        app.poll_print();
+
+        app.open_print();
+        {
+            let d = &app.print_draft;
+            assert_eq!(d.copies, 3);
+            assert_eq!(d.which, Which::Range);
+            assert_eq!(d.range, "1");
+            assert_eq!(d.subset, Subset::Odd);
+            assert!(d.reverse);
+            assert_eq!(d.handling, Handling::Multiple);
+            assert_eq!(d.per_sheet, 4);
+            assert_eq!(d.orientation, Orientation::Portrait);
+            assert!(d.grayscale);
+        }
+
+        // 3. Change settings again and cancel -> previous committed settings remain intact.
+        {
+            let d = &mut app.print_draft;
+            d.copies = 9;
+            d.handling = Handling::Poster;
+        }
+        app.dialogs.cancel::<HostedPrint>(&ctx);
+        app.poll_print();
+
+        app.open_print();
+        let d = &app.print_draft;
+        assert_eq!(d.copies, 3);
+        assert_eq!(d.handling, Handling::Multiple);
+        assert_eq!(d.per_sheet, 4);
+        assert!(d.grayscale);
+    }
 }
