@@ -98,6 +98,9 @@ fn opening(o: &CommentProps) -> DialogFields {
         f.set("border_shape", shape.name());
     }
     if let Some(size) = o.font_size {
+        let font_id =
+            pdfcraft_fonts::active_thai_font_entry().map(|t| format!("thai:{}", t.path.display())).unwrap_or_else(|| "helvetica".to_string());
+        f.set("font", FieldValue::Text(font_id));
         f.set("font_size", FieldValue::Number(size));
     }
     f.set("opacity", FieldValue::Number(o.opacity * 100.0));
@@ -136,6 +139,11 @@ pub fn edited(original: &CommentProps, fields: &DialogFields) -> CommentProps {
         e.color = fields.color(COLOUR).map(rgb).or(e.color);
     }
     if e.font_size.is_some() {
+        if let Some(font) = fields.text("font")
+            && let Some(path) = font.strip_prefix("thai:")
+        {
+            let _ = pdfcraft_fonts::set_active_thai_font_by_path(std::path::Path::new(path));
+        }
         e.border_color = fields.color(BORDER).map(rgb);
         e.font_size = fields.number("font_size").or(e.font_size);
     }
@@ -261,6 +269,15 @@ fn comment_props_dialog<'b>(
         rows.push(PropertyRow::field(colour_row(FILL, tl!("Fill colour"), Optional::Fill, recent.clone())));
     }
     if o.font_size.is_some() {
+        let mut choices: Vec<(String, String)> = vec![("helvetica".to_string(), "Helvetica".to_string())];
+        for tf in pdfcraft_fonts::available_thai_fonts() {
+            choices.push((format!("thai:{}", tf.path.display()), format!("{} (Thai)", tf.name)));
+        }
+        rows.push(PropertyRow::field(Param::new(
+            "font",
+            tl!("Font"),
+            ParamKind::choice(choices.into_iter().map(|(id, l)| (id, l.into())).collect(), Some("helvetica".into())),
+        )));
         rows.push(PropertyRow::field(
             Param::number("font_size", tl!("Font size"), 12.0, 0.5, 1).bounds(Some(1.0), Some(400.0)).unit(UnitKind::Points),
         ));
@@ -618,7 +635,7 @@ fn changes(o: &CommentProps, e: &CommentProps, page: usize, index: usize, t: &Co
     }
     if t.restylable
         && t.font_size.is_some()
-        && let Some(size) = e.font_size.filter(|s| Some(*s) != o.font_size)
+        && let Some(size) = e.font_size
     {
         out.push(Edit::FontSizeAnnotation { page, index, size });
     }

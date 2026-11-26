@@ -62,9 +62,9 @@ pub use print_ui::{
     TwoSidedSource, Which as PrintWhich, system_printers, system_two_sided,
 };
 pub use redact_ui::{HiddenDraft, RedactPrefs, SearchDraft as RedactSearchDraft, SearchMode as RedactSearchMode};
+pub(crate) mod font_combo;
 pub mod i18n;
 pub mod viewer_prefs;
-pub(crate) mod font_combo;
 // PLAN: the lead adds `mod notices; mod icons; mod brand; mod colour_picker; pub mod fonts;` here, and `pub mod settings;` in app.rs, at combine (L-212).
 
 use pdfcraft_engine::{DocId, Session};

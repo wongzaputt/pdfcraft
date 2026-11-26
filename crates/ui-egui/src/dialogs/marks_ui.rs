@@ -356,7 +356,9 @@ fn opening_fields(d: &MarksDraft, kind: MarkKind, m: &MarginUnits) -> DialogFiel
     f.set("range", PageRangeOptions::field_value(&d.range));
     match kind {
         MarkKind::HeaderFooter => {
-            f.set("font", FieldValue::Text(face_id(d.hf.font).into()));
+            let font_id =
+                pdfcraft_fonts::active_thai_font_entry().map(|e| format!("thai:{}", e.path.display())).unwrap_or_else(|| face_id(d.hf.font).into());
+            f.set("font", FieldValue::Text(font_id));
             f.set("hf.size", FieldValue::Number(d.hf.font_size));
             f.set("hf.underline", FieldValue::Bool(d.hf.underline));
             f.set("marks.hf.colour", colour_value(d.hf.color));
@@ -378,6 +380,9 @@ fn opening_fields(d: &MarksDraft, kind: MarkKind, m: &MarginUnits) -> DialogFiel
             f.set("file.is_pdf", FieldValue::Bool(d.file.as_ref().is_some_and(|x| x.1.starts_with(b"%PDF"))));
             f.set("file.page", FieldValue::Int(d.file_page as i64));
             if kind == MarkKind::Watermark {
+                let font_id =
+                    pdfcraft_fonts::active_thai_font_entry().map(|e| format!("thai:{}", e.path.display())).unwrap_or_else(|| "helvetica".to_string());
+                f.set("wm.font", FieldValue::Text(font_id));
                 f.set("file.scale", FieldValue::Number(d.wm.scale * 100.0));
                 f.set("wm.text", FieldValue::Text(d.wm.text.clone()));
                 f.set("wm.fit", FieldValue::Bool(d.fit));
@@ -416,8 +421,14 @@ fn read_fields(d: &mut MarksDraft, f: &DialogFields, kind: MarkKind, m: &MarginU
     }
     match kind {
         MarkKind::HeaderFooter => {
-            if let Some(face) = f.text("font").and_then(|id| FACES.iter().find(|(i, _)| *i == id)) {
-                d.hf.font = face.1;
+            if let Some(id) = f.text("font") {
+                if let Some(path) = id.strip_prefix("thai:") {
+                    let _ = pdfcraft_fonts::set_active_thai_font_by_path(path);
+                    let mono = pdfcraft_fonts::active_thai_font_entry().is_some_and(|e| e.family.contains("Mono") || e.family.contains("Typewriter"));
+                    d.hf.font = if mono { FontFamily::Courier } else { FontFamily::Helvetica };
+                } else if let Some(face) = FACES.iter().find(|(i, _)| *i == id) {
+                    d.hf.font = face.1;
+                }
             }
             d.hf.font_size = f.number("hf.size").unwrap_or(d.hf.font_size);
             d.hf.underline = f.bool("hf.underline").unwrap_or(d.hf.underline);
@@ -443,6 +454,11 @@ fn read_fields(d: &mut MarksDraft, f: &DialogFields, kind: MarkKind, m: &MarginU
             d.file_page = f.int("file.page").map_or(d.file_page, |p| p.clamp(1, 9999) as usize);
             let scale = f.number("file.scale").map(|p| p / 100.0);
             if kind == MarkKind::Watermark {
+                if let Some(id) = f.text("wm.font")
+                    && let Some(path) = id.strip_prefix("thai:")
+                {
+                    let _ = pdfcraft_fonts::set_active_thai_font_by_path(path);
+                }
                 d.wm.scale = scale.unwrap_or(d.wm.scale);
                 if let Some(text) = f.text("wm.text") {
                     text.clone_into(&mut d.wm.text);
@@ -576,12 +592,20 @@ fn file_rows(rows: &mut Vec<Param>) {
     );
 }
 
+fn font_choices() -> Vec<(String, String)> {
+    let mut choices: Vec<(String, String)> = FACES.iter().map(|(id, f)| ((*id).to_string(), f.label().to_string())).collect();
+    for tf in pdfcraft_fonts::available_thai_fonts() {
+        choices.push((format!("thai:{}", tf.path.display()), format!("{} (Thai)", tf.name)));
+    }
+    choices
+}
+
 /// The rows of the dialog for `kind`.
 fn rows(kind: MarkKind, g: &Geometry) -> Vec<Param> {
     let mut rows = Vec::new();
     match kind {
         MarkKind::HeaderFooter => {
-            rows.push(Param::new("font", tl!("Font:"), choice(FACES.iter().map(|(id, f)| ((*id).to_string(), f.label().to_string())), "helvetica")));
+            rows.push(Param::new("font", tl!("Font:"), choice(font_choices(), "helvetica")));
             rows.push(Param::number("hf.size", tl!("Size"), 12.0, 0.5, 1).bounds(Some(4.0), Some(72.0)).beside_previous());
             rows.push(Param::new("hf.underline", tl!("Underline"), ParamKind::bool(false)).beside_previous());
             rows.push(Param::new("marks.hf.colour", tl!("Colour"), ParamKind::color(None)).beside_previous());
@@ -609,6 +633,7 @@ fn rows(kind: MarkKind, g: &Geometry) -> Vec<Param> {
             file_rows(&mut rows);
             rows.push(Param::new("wm.text", tl!("Text"), ParamKind::text("")).multiline(2).hint("CONFIDENTIAL").enabled_when("source", "text"));
             rows.push(Param::new("wm.fit", tl!("Fit to page"), ParamKind::bool(true)).enabled_when("source", "text"));
+            rows.push(Param::new("wm.font", tl!("Font:"), choice(font_choices(), "helvetica")).enabled_when("source", "text"));
             rows.push(Param::number("wm.size", tl!("Size"), 72.0, 1.0, 0).bounds(Some(6.0), Some(300.0)).enabled_when("wm.fit", false));
             rows.push(Param::new("marks.wm.colour", tl!("Colour"), ParamKind::color(None)));
             rows.push(Param::new("wm.rotation", tl!("Rotation"), ParamKind::angle(0.0)));
@@ -867,7 +892,7 @@ fn overlay(kind: MarkKind, d: &MarksDraft, size: (f64, f64)) -> SharedOverlay {
                     };
                     // Courier previews in the monospaced UI face, the others proportional.
                     let size = (hf.font_size as f32 * s).max(5.0);
-                    let font = if hf.font == FontFamily::Courier { egui::FontId::monospace(size) } else { egui::FontId::proportional(size) };
+                    let font = crate::font_combo::preview_font_id(cx.painter.ctx(), size, hf.font == FontFamily::Courier);
                     p.text(pos2(x, y), align, shown, font, rgb32(hf.color));
                 }
             }
@@ -887,7 +912,11 @@ fn overlay(kind: MarkKind, d: &MarksDraft, size: (f64, f64)) -> SharedOverlay {
                 } else {
                     (wm.font_size as f32 * s).max(5.0)
                 };
-                let galley = p.layout_no_wrap(text.to_string(), egui::FontId::proportional(size), rgb32(wm.color).gamma_multiply(wm.opacity as f32));
+                let galley = p.layout_no_wrap(
+                    text.to_string(),
+                    crate::font_combo::preview_font_id(cx.painter.ctx(), size, false),
+                    rgb32(wm.color).gamma_multiply(wm.opacity as f32),
+                );
                 let angle = -(wm.rotation as f32).to_radians();
                 let half = galley.size() / 2.0;
                 let (sn, cs) = angle.sin_cos();
