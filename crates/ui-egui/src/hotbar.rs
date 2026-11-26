@@ -365,6 +365,13 @@ fn fill_text_controls(ui: &mut egui::Ui, app: &mut PdfCraftApp) {
         });
     }
 
+    let font_label = pdfcraft_fonts::active_thai_font_entry().map(|e| e.name).unwrap_or_else(|| "Helvetica".to_string());
+    if let Some(_sel) = crate::font_combo::font_combo_box(ui, "hotbar-fill-font", &font_label, Some(110.0))
+        && let Some((page, index)) = picked
+    {
+        app.apply_edit(ui.ctx(), Edit::FontSizeAnnotation { page, index, size: app.fill_text_size });
+    }
+
     let (min, max) = (crate::fill_sign::MIN_TEXT_SIZE, crate::fill_sign::MAX_TEXT_SIZE);
     let mut size = app.fill_text_size;
     // #1274: the size also applies to the Fill & Sign text that is selected, once per committed change (a typed

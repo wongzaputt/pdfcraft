@@ -200,8 +200,41 @@ fn appearance_tab(ui: &mut egui::Ui, d: &mut FieldDraft, recent: &RecentColours,
     }
     number_row(ui, "font-size", tl!("Font Size:"), &mut d.font_size, 2.0..=100.0, Some(tl!("pt")), !auto);
     let Some(l) = d.look.as_mut() else { return };
-    let fonts = entries(&FieldFont::ALL, |f| tl!(f.label()).to_string());
-    select_row(ui, "font", tl!("Font:"), &mut l.font, &fonts);
+    let current_label = if d.standard_font {
+        l.font.label().to_string()
+    } else {
+        pdfcraft_fonts::active_thai_font_entry().map(|e| e.name).unwrap_or_else(|| l.font.label().to_string())
+    };
+    Field::new(tl!("Font:")).id_salt("font").show(ui, |ui, _| {
+        if let Some(sel) = crate::font_combo::font_combo_box(ui, "field-font", &current_label, Some(140.0)) {
+            match sel {
+                crate::font_combo::FontSelection::Standard(name) => {
+                    d.standard_font = true;
+                    if name == "Times" {
+                        l.font = FieldFont::Times;
+                    } else if name == "Courier" {
+                        l.font = FieldFont::Courier;
+                    } else {
+                        l.font = FieldFont::Helvetica;
+                    }
+                }
+                crate::font_combo::FontSelection::Thai(entry) => {
+                    d.standard_font = false;
+                    d.font_changed = true;
+                    if entry.family.contains("Mono") || entry.family.contains("Typewriter") {
+                        l.font = FieldFont::Courier;
+                    } else {
+                        l.font = FieldFont::Helvetica;
+                    }
+                }
+                crate::font_combo::FontSelection::Installed(_) => {
+                    d.standard_font = false;
+                    d.font_changed = true;
+                    l.font = FieldFont::Helvetica;
+                }
+            }
+        }
+    });
     FieldGroup::new(tl!("Text Color:")).id_salt("text-colour").show(ui, |ui, _| {
         let pick = palette(ui, tl!("Text Color:"), Some(l.text), "field.props.text", recent);
         if let Some(c) = pick.picked {

@@ -167,6 +167,8 @@ impl Default for FieldDraft {
             on_state: String::new(),
             export_value: String::new(),
             font_size: 0.0,
+            standard_font: false,
+            font_changed: false,
             position: [0.0; 4],
             rotation: 0,
             look: None,

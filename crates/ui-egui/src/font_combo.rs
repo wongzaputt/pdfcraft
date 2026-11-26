@@ -27,7 +27,7 @@ pub(crate) fn font_combo_box(
 ) -> Option<FontSelection> {
     let mut chosen = None;
 
-    let mut combo = craft_ui::ComboBox::from_id_salt(id_salt).selected_text(current_label);
+    let mut combo = egui::ComboBox::from_id_salt(id_salt).selected_text(current_label);
     if let Some(w) = width {
         combo = combo.width(w);
     }
@@ -65,72 +65,69 @@ pub(crate) fn font_combo_box(
             ui.menu_button(tl!("Installed fonts…"), |ui| {
                 ui.set_min_width(260.0);
                 let reload = ui.button(tl!("Reload")).clicked();
-                match crate::files::installed_font_files(ui.ctx(), reload) {
-                    Some(list) if list.is_empty() => {
-                        ui.label(tl!("No openly licensed document fonts found. Load a font file."));
+                let list_id = ui.scope_id().with("font-combo-installed-fonts");
+                let list: Vec<pdfcraft_engine::text_fonts::FontFile> = if reload {
+                    let discovered = pdfcraft_engine::text_fonts::discover(&pdfcraft_engine::text_fonts::installed_directories());
+                    ui.data_mut(|d| d.insert_temp(list_id, discovered.clone()));
+                    discovered
+                } else if let Some(cached) = ui.data(|d| d.get_temp::<Vec<pdfcraft_engine::text_fonts::FontFile>>(list_id)) {
+                    cached
+                } else {
+                    let discovered = pdfcraft_engine::text_fonts::discover(&pdfcraft_engine::text_fonts::installed_directories());
+                    ui.data_mut(|d| d.insert_temp(list_id, discovered.clone()));
+                    discovered
+                };
+                if list.is_empty() {
+                    ui.label(tl!("No openly licensed document fonts found. Load a font file."));
+                } else {
+                    let search_id = ui.scope_id().with("font-picker-search");
+                    let mut query = ui.data(|d| d.get_temp::<String>(search_id)).unwrap_or_default();
+                    let resp = ui.add(egui::TextEdit::singleline(&mut query).hint_text(tl!("Search…")).desired_width(ui.available_width() - 8.0));
+                    if resp.changed() {
+                        ui.data_mut(|d| d.insert_temp(search_id, query.clone()));
                     }
-                    Some(list) => {
-                        let search_id = ui.scope_id().with("font-picker-search");
-                        let mut query = ui.data(|d| d.get_temp::<String>(search_id)).unwrap_or_default();
-                        ui.horizontal(|ui| {
-                            let (icon_rect, _) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
-                            crate::icons::paint(ui, icon_rect, "search", 13.0, ui.visuals().text_color().gamma_multiply(0.6));
-                            let resp =
-                                ui.add(egui::TextEdit::singleline(&mut query).hint_text(tl!("Search…")).desired_width(ui.available_width() - 8.0));
-                            if resp.changed() {
-                                ui.data_mut(|d| d.insert_temp(search_id, query.clone()));
-                            }
-                        });
-                        ui.separator();
+                    ui.separator();
 
-                        let query_lower = query.trim().to_lowercase();
-                        let mut families: std::collections::BTreeMap<&str, Vec<&pdfcraft_engine::text_fonts::FontFile>> =
-                            std::collections::BTreeMap::new();
-                        for font in &list {
-                            if query_lower.is_empty()
-                                || font.family.to_lowercase().contains(&query_lower)
-                                || font.face.to_lowercase().contains(&query_lower)
-                            {
-                                families.entry(&font.family).or_default().push(font);
-                            }
+                    let query_lower = query.trim().to_lowercase();
+                    let mut families: std::collections::BTreeMap<&str, Vec<&pdfcraft_engine::text_fonts::FontFile>> =
+                        std::collections::BTreeMap::new();
+                    for font in &list {
+                        if query_lower.is_empty()
+                            || font.family.to_lowercase().contains(&query_lower)
+                            || font.face.to_lowercase().contains(&query_lower)
+                        {
+                            families.entry(&font.family).or_default().push(font);
                         }
+                    }
 
-                        if families.is_empty() {
-                            ui.label(tl!("No openly licensed document fonts found. Load a font file."));
-                        } else {
-                            egui::ScrollArea::vertical().max_height(350.0).show(ui, |ui| {
-                                for (family, faces) in families {
-                                    if faces.len() == 1 {
-                                        if let Some(&font) = faces.first() {
-                                            let label = if font.face != font.family && !font.face.is_empty() { font.face.as_str() } else { family };
+                    if families.is_empty() {
+                        ui.label(tl!("No openly licensed document fonts found. Load a font file."));
+                    } else {
+                        egui::ScrollArea::vertical().max_height(350.0).show(ui, |ui| {
+                            for (family, faces) in families {
+                                if faces.len() == 1 {
+                                    if let Some(&font) = faces.first() {
+                                        let label = if font.face != font.family && !font.face.is_empty() { font.face.as_str() } else { family };
+                                        if ui.button(label).clicked() {
+                                            chosen = Some(FontSelection::Installed(font.path.clone()));
+                                            ui.close();
+                                        }
+                                    }
+                                } else {
+                                    ui.menu_button(family, |ui| {
+                                        ui.set_min_width(180.0);
+                                        for font in faces {
+                                            let label =
+                                                font.face.strip_prefix(family).map(str::trim).filter(|s| !s.is_empty()).unwrap_or(font.face.as_str());
                                             if ui.button(label).clicked() {
                                                 chosen = Some(FontSelection::Installed(font.path.clone()));
                                                 ui.close();
                                             }
                                         }
-                                    } else {
-                                        ui.menu_button(family, |ui| {
-                                            ui.set_min_width(180.0);
-                                            for font in faces {
-                                                let label = font
-                                                    .face
-                                                    .strip_prefix(family)
-                                                    .map(str::trim)
-                                                    .filter(|s| !s.is_empty())
-                                                    .unwrap_or(font.face.as_str());
-                                                if ui.button(label).clicked() {
-                                                    chosen = Some(FontSelection::Installed(font.path.clone()));
-                                                    ui.close();
-                                                }
-                                            }
-                                        });
-                                    }
+                                    });
                                 }
-                            });
-                        }
-                    }
-                    None => {
-                        ui.label(tl!("Loading fonts…"));
+                            }
+                        });
                     }
                 }
             });
@@ -154,6 +151,23 @@ pub(crate) fn preview_font_id(ctx: &egui::Context, size: f32, monospace: bool) -
     if monospace { egui::FontId::monospace(size) } else { egui::FontId::proportional(size) }
 }
 
+/// Register the currently active Thai font under `"thai-preview"` for dialog previews.
+pub(crate) fn sync_preview_font(ctx: &egui::Context) {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(active) = pdfcraft_fonts::active_thai_font() {
+        let mut defs = ctx.fonts(|f| f.definitions().clone());
+        let mut stack = defs.families.get(&egui::FontFamily::Proportional).cloned().unwrap_or_default();
+        let preview_key = "thai-preview-active".to_owned();
+        stack.retain(|n| n != &preview_key);
+        defs.font_data.insert(preview_key.clone(), std::sync::Arc::new(egui::FontData::from_static(active.bytes)));
+        stack.insert(0, preview_key);
+        defs.families.insert(egui::FontFamily::Name("thai-preview".into()), stack);
+        ctx.set_fonts(defs);
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = ctx;
+}
+
 /// Activate font selection
 fn apply_font_selection(ui: &mut Ui, sel: &FontSelection) {
     #[cfg(not(target_arch = "wasm32"))]
@@ -166,16 +180,8 @@ fn apply_font_selection(ui: &mut Ui, sel: &FontSelection) {
 
         if let Some(path) = path_opt
             && pdfcraft_fonts::set_active_thai_font_by_path(path).is_ok()
-            && let Some(active) = pdfcraft_fonts::active_thai_font()
         {
-            let cjk = crate::theme::CjkPreference::for_language(crate::i18n::current().code());
-            let mut defs = crate::theme::installed_font_definitions(cjk);
-            let mut stack = defs.families.get(&egui::FontFamily::Proportional).cloned().unwrap_or_default();
-            let preview_key = "thai-preview-active".to_owned();
-            defs.font_data.insert(preview_key.clone(), std::sync::Arc::new(egui::FontData::from_static(active.bytes)));
-            stack.insert(0, preview_key);
-            defs.families.insert(egui::FontFamily::Name("thai-preview".into()), stack);
-            ui.ctx().set_fonts(defs);
+            sync_preview_font(ui.ctx());
         }
     }
     #[cfg(target_arch = "wasm32")]
