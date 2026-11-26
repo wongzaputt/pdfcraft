@@ -415,6 +415,11 @@ impl PdfCraftApp {
 
     /// Pick up a printer list, driver options or a spooled job that finished (each frame).
     pub(crate) fn poll_print(&mut self) {
+        if !self.dialogs.is_open::<HostedPrint>()
+            && let Some(before) = self.print_before_open.take()
+        {
+            self.print_draft = before;
+        }
         #[cfg(target_arch = "wasm32")]
         self.poll_web_print();
         #[cfg(not(target_arch = "wasm32"))]
@@ -575,6 +580,10 @@ impl PdfCraftApp {
         if to_printer {
             self.print_draft.remember_setup();
         }
+        if !matches!(sent, PrintStart::Picking) {
+            self.print_committed = Some(self.print_draft.clone());
+            self.print_before_open = None;
+        }
         Ok(sent)
     }
 
@@ -703,6 +712,8 @@ impl PdfCraftApp {
                     }
                     Some(path) => match app.host.files().write(&path, &bytes, craft::host::WriteIntent::SaveAs) {
                         Ok(_) => {
+                            app.print_committed = Some(app.print_draft.clone());
+                            app.print_before_open = None;
                             app.notify_fmt("Saved the print-ready PDF to {path}", &[("path", &path.display().to_string())]);
                             Ok(())
                         }
