@@ -1746,3 +1746,98 @@ fn each_printer_keeps_what_it_last_printed_with_across_a_restart() {
     gone.settle();
     assert_eq!(setup(&gone), office);
 }
+
+#[test]
+fn session_print_settings_are_remembered_only_after_printing() {
+    use pdfcraft_engine::print::{Orientation, Subset};
+    use pdfcraft_ui_egui::{PrintHandling, PrintWhich};
+
+    let mut h = harness();
+    h.state_mut().printer_source = Some(Arc::new(|| vec![printer("Office", true)]));
+    let jobs = record_spooler(&mut h);
+
+    // 1. Open Print, change settings, then cancel without printing -> nothing is remembered.
+    h.open();
+    h.settle();
+    {
+        let d = &mut h.state_mut().print_draft;
+        d.copies = 4;
+        d.which = PrintWhich::Range;
+        d.range = "1-2".into();
+        d.subset = Subset::Odd;
+        d.reverse = true;
+        d.handling = PrintHandling::Booklet;
+        d.orientation = Orientation::Landscape;
+        d.grayscale = true;
+    }
+    let ctx = h.ctx();
+    h.state_mut().dialogs.cancel::<craft::print::ui::HostedPrint>(&ctx);
+    h.step();
+    assert_eq!(jobs.lock().unwrap().len(), 0);
+
+    h.open();
+    h.settle();
+    {
+        let d = &h.state().print_draft;
+        assert_eq!(d.copies, 1);
+        assert_eq!(d.which, PrintWhich::All);
+        assert_eq!(d.range, "");
+        assert_eq!(d.subset, Subset::All);
+        assert!(!d.reverse);
+        assert_eq!(d.handling, PrintHandling::Size);
+        assert_eq!(d.orientation, Orientation::Auto);
+        assert!(!d.grayscale);
+    }
+
+    // 2. Change settings and actually print -> all settings are remembered on next open.
+    {
+        let d = &mut h.state_mut().print_draft;
+        d.copies = 3;
+        d.which = PrintWhich::Range;
+        d.range = "1".into();
+        d.subset = Subset::Even;
+        d.reverse = true;
+        d.handling = PrintHandling::Multiple;
+        d.per_sheet = 4;
+        d.orientation = Orientation::Portrait;
+        d.grayscale = true;
+    }
+    let ctx = h.ctx();
+    assert!(h.state_mut().print_now(&ctx).is_ok());
+    h.state_mut().dialogs.cancel::<craft::print::ui::HostedPrint>(&ctx);
+    h.step();
+    assert_eq!(jobs.lock().unwrap().len(), 1);
+
+    h.open();
+    h.settle();
+    {
+        let d = &h.state().print_draft;
+        assert_eq!(d.copies, 3);
+        assert_eq!(d.which, PrintWhich::Range);
+        assert_eq!(d.range, "1");
+        assert_eq!(d.subset, Subset::Even);
+        assert!(d.reverse);
+        assert_eq!(d.handling, PrintHandling::Multiple);
+        assert_eq!(d.per_sheet, 4);
+        assert_eq!(d.orientation, Orientation::Portrait);
+        assert!(d.grayscale);
+    }
+
+    // 3. Change settings again and cancel -> previous committed settings remain intact.
+    {
+        let d = &mut h.state_mut().print_draft;
+        d.copies = 9;
+        d.handling = PrintHandling::Poster;
+    }
+    let ctx = h.ctx();
+    h.state_mut().dialogs.cancel::<craft::print::ui::HostedPrint>(&ctx);
+    h.step();
+
+    h.open();
+    h.settle();
+    let d = &h.state().print_draft;
+    assert_eq!(d.copies, 3);
+    assert_eq!(d.handling, PrintHandling::Multiple);
+    assert_eq!(d.per_sheet, 4);
+    assert!(d.grayscale);
+}

@@ -711,6 +711,10 @@ pub struct PdfCraftApp {
     /// Remove hidden information, while it is open.
     pub hidden_draft: Option<HiddenDraft>,
     pub print_draft: PrintDraft,
+    /// Last print settings committed by clicking Print (remembered for this session).
+    pub(crate) print_committed: Option<PrintDraft>,
+    /// Snapshot of `print_draft` taken when the Print dialog opens, restored if cancelled.
+    pub(crate) print_before_open: Option<PrintDraft>,
     /// The style new text gets (Edit a PDF ▸ Format text).
     pub text_style: pdfcraft_engine::AddedText,
     /// Edit a PDF shows its More tools.

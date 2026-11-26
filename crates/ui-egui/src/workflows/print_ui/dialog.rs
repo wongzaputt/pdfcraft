@@ -60,11 +60,15 @@ impl PdfCraftApp {
         #[cfg(target_arch = "wasm32")]
         let printers = self.sync_listed();
 
+        if !self.dialogs.is_open::<HostedPrint>() {
+            self.print_before_open = Some(self.print_draft.clone());
+        }
         let current = self.views[i].current();
         let selected: Vec<usize> = self.views[i].selected.items.to_vec();
-        let mut keep = std::mem::take(&mut self.print_draft);
+        let has_committed = self.print_committed.is_some();
+        let mut keep = self.print_committed.clone().unwrap_or_else(|| std::mem::take(&mut self.print_draft));
         // Leaving Label gives back the paper it replaced (#3564), before the layout resets below.
-        if keep.handling == Handling::Label {
+        if !has_committed && keep.handling == Handling::Label {
             keep.set_handling(Handling::Size);
         }
         let default = default_printer(&keep, &printers);
@@ -74,45 +78,66 @@ impl PdfCraftApp {
         // A printer other than last time's brings back what it was last printed with (#2001);
         // the same one keeps this session's choices.
         let changed = printer != keep.printer;
-        // Picked pages are what Print is for (Acrobat's "Selected pages"); without any, the whole document.
-        let which = if selected.is_empty() { Which::All } else { Which::Selected };
-        // Copies, pages, the layout with its own options and orientation are this job's, and start from the defaults
-        // each time the dialog opens: ISO 32000-2 Table 147 initialises them per document when the print dialog opens
-        // (NumCopies, "typically 1"; PrintPageRange). The choices that describe how this computer prints (two-sided,
-        // grayscale, collate, sizing, Comments & forms, a booklet's binding) carry over, and are remembered across
-        // restarts (#2001).
-        let fresh = PrintDraft::default();
-        self.print_draft = PrintDraft {
-            copies: fresh.copies,
-            range: fresh.range,
-            subset: fresh.subset,
-            reverse: fresh.reverse,
-            handling: fresh.handling,
-            per_sheet: fresh.per_sheet,
-            custom_grid: fresh.custom_grid,
-            cols: fresh.cols,
-            rows: fresh.rows,
-            order: fresh.order,
-            border: fresh.border,
-            auto_rotate: fresh.auto_rotate,
-            booklet_subset: fresh.booklet_subset,
-            poster_scale: fresh.poster_scale,
-            overlap: fresh.overlap,
-            cut_marks: fresh.cut_marks,
-            label_flip: fresh.label_flip,
-            orientation: fresh.orientation,
-            crops: Vec::new(),
-            crop_pages: None,
-            printer_picked: picked,
-            units: self.units,
-            printer: printer.clone(),
-            current_page: current,
-            sheet: 0,
-            selected,
-            which,
-            area: None,
-            custom_new: None,
-            ..keep
+        self.print_draft = if has_committed {
+            let which = match keep.which {
+                Which::Area => Which::All,
+                Which::Selected if selected.is_empty() => Which::All,
+                w => w,
+            };
+            PrintDraft {
+                crops: Vec::new(),
+                crop_pages: None,
+                printer_picked: picked,
+                units: self.units,
+                printer: printer.clone(),
+                current_page: current,
+                sheet: 0,
+                selected,
+                which,
+                area: None,
+                custom_new: None,
+                show_driver_options: false,
+                driver_error: None,
+                driver_options_loading: None,
+                papers_loading: None,
+                ..keep
+            }
+        } else {
+            // Picked pages are what Print is for (Acrobat's "Selected pages"); without any, the whole document.
+            let which = if selected.is_empty() { Which::All } else { Which::Selected };
+            let fresh = PrintDraft::default();
+            PrintDraft {
+                copies: fresh.copies,
+                range: fresh.range,
+                subset: fresh.subset,
+                reverse: fresh.reverse,
+                handling: fresh.handling,
+                per_sheet: fresh.per_sheet,
+                custom_grid: fresh.custom_grid,
+                cols: fresh.cols,
+                rows: fresh.rows,
+                order: fresh.order,
+                border: fresh.border,
+                auto_rotate: fresh.auto_rotate,
+                booklet_subset: fresh.booklet_subset,
+                poster_scale: fresh.poster_scale,
+                overlap: fresh.overlap,
+                cut_marks: fresh.cut_marks,
+                label_flip: fresh.label_flip,
+                orientation: fresh.orientation,
+                crops: Vec::new(),
+                crop_pages: None,
+                printer_picked: picked,
+                units: self.units,
+                printer: printer.clone(),
+                current_page: current,
+                sheet: 0,
+                selected,
+                which,
+                area: None,
+                custom_new: None,
+                ..keep
+            }
         };
         if changed {
             self.print_draft.apply_setup();

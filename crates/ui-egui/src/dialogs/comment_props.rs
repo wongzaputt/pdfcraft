@@ -98,9 +98,7 @@ fn opening(o: &CommentProps) -> DialogFields {
         f.set("border_shape", shape.name());
     }
     if let Some(size) = o.font_size {
-        let font_id = pdfcraft_fonts::active_thai_font()
-            .map(|t| format!("thai:{}", t.path.display()))
-            .unwrap_or_else(|| "helvetica".to_string());
+        let font_id = pdfcraft_fonts::active_thai_font().map(|t| format!("thai:{}", t.path.display())).unwrap_or_else(|| "helvetica".to_string());
         f.set("font", FieldValue::Text(font_id));
         f.set("font_size", FieldValue::Number(size));
     }

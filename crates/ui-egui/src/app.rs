@@ -500,6 +500,8 @@ impl PdfCraftApp {
             redact_search_open: false,
             hidden_draft: None,
             print_draft: PrintDraft::default(),
+            print_committed: None,
+            print_before_open: None,
             text_style: content_ui::default_style(),
             edit_more: false,
             replace_source: None,
